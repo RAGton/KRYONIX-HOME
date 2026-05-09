@@ -85,7 +85,11 @@ pub fn run() -> Result<()> {
             report::print_duplicates(&groups);
             eprintln!("\nNenhuma alteração foi feita.");
         }
-        Commands::Plan { json, rename_suggestions, .. } => {
+        Commands::Plan {
+            json,
+            rename_suggestions,
+            ..
+        } => {
             let scan = scanner::load_latest_scan()?;
             let plan = planner::generate_plan(&scan, rename_suggestions);
             if json {

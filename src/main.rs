@@ -1,10 +1,10 @@
-pub mod naming;
 mod apply;
 mod cli;
 mod hashing;
 mod ignore;
 mod manifest;
 mod metadata;
+pub mod naming;
 mod planner;
 mod report;
 mod rollback;

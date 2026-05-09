@@ -50,14 +50,15 @@ pub fn generate_plan(scan: &ScanResult, rename_suggestions: bool) -> Plan {
                     proposal.rules_applied = Some(suggestion.rules_applied);
                     proposal.naming_profile = Some(suggestion.naming_profile);
                     proposal.needs_review = proposal.needs_review || suggestion.needs_review;
-                    
+
                     // Ajustar risk e confidence
                     if suggestion.risk == "high" {
                         proposal.risk = "high".to_string();
                     } else if suggestion.risk == "medium" && proposal.risk == "low" {
                         proposal.risk = "medium".to_string();
                     }
-                    proposal.confidence = (proposal.confidence + suggestion.confidence as f64) / 2.0;
+                    proposal.confidence =
+                        (proposal.confidence + suggestion.confidence as f64) / 2.0;
                     proposal.reason = format!("{} | {}", proposal.reason, suggestion.reason);
                 }
             }

@@ -1,6 +1,6 @@
-/etc/kryonix/packages/kryonix-home/target/debug/deps/kryonix_home-17b9f17a28ac8c24.d: src/main.rs src/apply.rs src/cli.rs src/hashing.rs src/ignore.rs src/manifest.rs src/metadata.rs src/planner.rs src/report.rs src/rollback.rs src/scanner.rs Cargo.toml
+/etc/kryonix/packages/kryonix-home/target/debug/deps/kryonix_home-17b9f17a28ac8c24.d: src/main.rs src/apply.rs src/cli.rs src/hashing.rs src/ignore.rs src/manifest.rs src/metadata.rs src/naming.rs src/planner.rs src/report.rs src/rollback.rs src/scanner.rs Cargo.toml
 
-/etc/kryonix/packages/kryonix-home/target/debug/deps/libkryonix_home-17b9f17a28ac8c24.rmeta: src/main.rs src/apply.rs src/cli.rs src/hashing.rs src/ignore.rs src/manifest.rs src/metadata.rs src/planner.rs src/report.rs src/rollback.rs src/scanner.rs Cargo.toml
+/etc/kryonix/packages/kryonix-home/target/debug/deps/libkryonix_home-17b9f17a28ac8c24.rmeta: src/main.rs src/apply.rs src/cli.rs src/hashing.rs src/ignore.rs src/manifest.rs src/metadata.rs src/naming.rs src/planner.rs src/report.rs src/rollback.rs src/scanner.rs Cargo.toml
 
 src/main.rs:
 src/apply.rs:
@@ -9,6 +9,7 @@ src/hashing.rs:
 src/ignore.rs:
 src/manifest.rs:
 src/metadata.rs:
+src/naming.rs:
 src/planner.rs:
 src/report.rs:
 src/rollback.rs:
