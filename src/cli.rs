@@ -126,6 +126,21 @@ enum Commands {
     },
     /// Reverte o último apply executado
     Rollback,
+    /// Exporta os eventos do Home Brain em formato JSONL
+    #[command(name = "export-memory")]
+    ExportMemory {
+        /// Apenas simula a exportação sem salvar no arquivo local
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
+
+        /// Imprime cada linha do evento JSONL na saída padrão (stdout)
+        #[arg(long, default_value_t = false)]
+        jsonl: bool,
+
+        /// Escolhe a fonte de dados (latest-scan, latest-plan, latest-manifest, latest-audit)
+        #[arg(long, default_value = "latest-plan")]
+        from: String,
+    },
 }
 
 pub fn run() -> Result<()> {
@@ -293,6 +308,9 @@ pub fn run() -> Result<()> {
         }
         Commands::Rollback => {
             rollback::run_rollback()?;
+        }
+        Commands::ExportMemory { dry_run, jsonl, from } => {
+            crate::export::export_memory(&from, jsonl, dry_run)?;
         }
     }
 

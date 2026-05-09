@@ -31,6 +31,8 @@ pub struct ManifestAction {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_kind: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub category_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub category_label: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub category_dir: Option<String>,
@@ -40,6 +42,8 @@ pub struct ManifestAction {
     pub matched_keywords: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub taxonomy_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub taxonomy_profile: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub candidate_categories: Option<Vec<String>>,
     pub already_organized: bool,
@@ -116,11 +120,13 @@ pub fn create_manifest(plan: &Plan, scan: &ScanResult) -> Result<Manifest> {
                 rules_applied: prop.rules_applied.clone(),
                 naming_profile: prop.naming_profile.clone(),
                 operation_kind,
+                category_id: prop.category_id.clone(),
                 category_label: prop.category_label.clone(),
                 category_dir: prop.category_dir.clone(),
                 taxonomy_score: prop.taxonomy_score,
                 matched_keywords: prop.matched_keywords.clone(),
                 taxonomy_reason: prop.taxonomy_reason.clone(),
+                taxonomy_profile: prop.taxonomy_profile.clone(),
                 candidate_categories: prop.candidate_categories.clone(),
                 already_organized: prop.already_organized,
             });

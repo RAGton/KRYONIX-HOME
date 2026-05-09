@@ -10,6 +10,8 @@ mod report;
 mod rollback;
 mod scanner;
 pub mod taxonomy;
+mod export;
+
 
 fn main() {
     if let Err(e) = cli::run() {
