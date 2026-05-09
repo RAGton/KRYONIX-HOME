@@ -77,13 +77,57 @@ pub fn audits_dir() -> Result<PathBuf> {
 pub fn create_manifest(plan: &Plan, scan: &ScanResult) -> Result<Manifest> {
     let mut actions = Vec::new();
 
-    // Create an index of file metadata from the scan
+    // Index de arquivos
     let mut file_map = std::collections::HashMap::new();
     for file in &scan.files {
         file_map.insert(file.path.clone(), file);
     }
 
+    // Index de projetos
+    let mut project_map = std::collections::HashMap::new();
+    for project in &scan.projects {
+        project_map.insert(project.root_path.clone(), project);
+    }
+
     for prop in &plan.proposals {
+        if prop.action == "move_project" {
+            if let Some(project) = project_map.get(&prop.old_path) {
+                let target_path = Path::new(&plan.home_dir)
+                    .join(&prop.new_dir)
+                    .join(&project.name)
+                    .to_string_lossy()
+                    .to_string();
+
+                actions.push(ManifestAction {
+                    source_path: prop.old_path.clone(),
+                    target_path,
+                    action_type: prop.action.clone(),
+                    old_hash: None, // Diretórios não têm hash único simples aqui
+                    size_bytes: project.total_size_bytes,
+                    mime: "inode/directory".to_string(),
+                    reason: prop.reason.clone(),
+                    risk: prop.risk.clone(),
+                    status: "planned".to_string(),
+                    error_msg: None,
+                    old_filename: Some(project.name.clone()),
+                    new_filename: None,
+                    rules_applied: prop.rules_applied.clone(),
+                    naming_profile: None,
+                    operation_kind: Some("move_project".to_string()),
+                    category_id: prop.category_id.clone(),
+                    category_label: prop.category_label.clone(),
+                    category_dir: prop.category_dir.clone(),
+                    taxonomy_score: prop.taxonomy_score,
+                    matched_keywords: prop.matched_keywords.clone(),
+                    taxonomy_reason: prop.taxonomy_reason.clone(),
+                    taxonomy_profile: prop.taxonomy_profile.clone(),
+                    candidate_categories: prop.candidate_categories.clone(),
+                    already_organized: prop.already_organized,
+                });
+            }
+            continue;
+        }
+
         if let Some(file_meta) = file_map.get(&prop.old_path) {
             let file_name = Path::new(&prop.old_path)
                 .file_name()

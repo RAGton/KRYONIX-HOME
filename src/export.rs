@@ -152,6 +152,8 @@ pub fn export_memory(from_source: &str, jsonl_stdout: bool, dry_run: bool) -> Re
                 true,  // include_large_files
                 false, // safe_only
                 false, // review_only
+                false, // only_projects
+                None,  // limit
             );
 
             // Mapear arquivos do scan para fácil acesso de mime/size

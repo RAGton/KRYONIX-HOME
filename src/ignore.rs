@@ -1,18 +1,5 @@
 use std::path::Path;
 
-/// Nomes de arquivos que indicam que o diretório é um projeto de software
-/// e deve ser ignorado inteiramente.
-const PROJECT_MARKERS: &[&str] = &[
-    ".git",
-    "flake.nix",
-    "Cargo.toml",
-    "pyproject.toml",
-    "package.json",
-    "go.mod",
-    "deno.json",
-    "pnpm-lock.yaml",
-    "yarn.lock",
-];
 
 /// Nomes de diretórios que devem ser ignorados (hidden dirs, config, cache, secrets).
 const IGNORED_DIRS: &[&str] = &[
@@ -81,12 +68,6 @@ pub fn should_ignore_file(path: &Path) -> bool {
     false
 }
 
-/// Retorna true se o diretório contém marcadores de projeto e deve ser pulado inteiramente.
-pub fn is_project_dir(path: &Path) -> bool {
-    PROJECT_MARKERS
-        .iter()
-        .any(|marker| path.join(marker).exists())
-}
 
 /// Retorna true se o arquivo é um secret e não deve ser processado.
 pub fn is_secret_file(path: &Path) -> bool {

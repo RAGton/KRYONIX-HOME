@@ -52,6 +52,8 @@ enum Commands {
     Report,
     /// Lista duplicatas exatas (SHA256 idêntico)
     Duplicates,
+    /// Lista raízes de projetos detectadas (Git, Rust, Nix, etc.)
+    Projects,
     /// Lista todas as categorias de taxonomia atualmente configuradas
     Categories {
         /// Emitir saída em formato JSON
@@ -105,6 +107,18 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         review_only: bool,
 
+        /// Exibir apenas propostas de projetos
+        #[arg(long, default_value_t = false)]
+        only_projects: bool,
+
+        /// Limite de propostas exibidas no relatório
+        #[arg(long)]
+        limit: Option<usize>,
+
+        /// Exibir apenas o resumo/dashboard, sem lista de arquivos
+        #[arg(long, default_value_t = false)]
+        summary: bool,
+
         /// Exibir explicações detalhadas por proposta no relatório de texto
         #[arg(long, default_value_t = false)]
         why: bool,
@@ -123,6 +137,10 @@ enum Commands {
         /// Confirma e executa as ações (move/rename)
         #[arg(long, default_value_t = false)]
         confirm: bool,
+
+        /// Exibir o que será feito antes de pedir confirmação interativa
+        #[arg(long, default_value_t = false)]
+        interactive_preview: bool,
     },
     /// Reverte o último apply executado
     Rollback,
@@ -162,6 +180,11 @@ pub fn run() -> Result<()> {
             let scan = scanner::load_latest_scan()?;
             let groups = hashing::find_duplicates(&scan)?;
             report::print_duplicates(&groups);
+            eprintln!("\nNenhuma alteração foi feita.");
+        }
+        Commands::Projects => {
+            let scan = scanner::load_latest_scan()?;
+            report::print_projects(&scan);
             eprintln!("\nNenhuma alteração foi feita.");
         }
         Commands::Categories {
@@ -234,6 +257,9 @@ pub fn run() -> Result<()> {
             include_large_files,
             safe_only,
             review_only,
+            only_projects,
+            limit,
+            summary,
             why,
             ..
         } => {
@@ -246,11 +272,17 @@ pub fn run() -> Result<()> {
                 include_large_files,
                 safe_only,
                 review_only,
+                only_projects,
+                limit,
             );
             if json {
                 println!("{}", serde_json::to_string_pretty(&plan)?);
             } else {
-                report::print_plan(&plan);
+                if summary {
+                    report::print_plan_dashboard(&plan);
+                } else {
+                    report::print_plan(&plan);
+                }
                 if why {
                     println!("\n=== Detalhamento Explicativo das Propostas ===");
                     for prop in &plan.proposals {
@@ -287,6 +319,8 @@ pub fn run() -> Result<()> {
                     include_large_files,
                     safe_only,
                     review_only,
+                    false, // only_projects default false
+                    None,  // limit default None
                 );
                 manifest::create_manifest(&plan, &scan)?;
             }
@@ -295,10 +329,22 @@ pub fn run() -> Result<()> {
                 manifest::show_manifest(&m);
             }
         },
-        Commands::Apply { dry_run, confirm } => {
+        Commands::Apply { dry_run, confirm, interactive_preview } => {
             if !dry_run && !confirm {
                 eprintln!("Por segurança, você deve passar --dry-run ou --confirm para apply.");
                 std::process::exit(1);
+            }
+
+            if interactive_preview {
+                let m = manifest::get_latest_manifest()?;
+                manifest::show_manifest(&m);
+                println!("\nVocê deseja prosseguir com o apply acima? [s/N]");
+                let mut input = String::new();
+                std::io::stdin().read_line(&mut input)?;
+                if input.trim().to_lowercase() != "s" {
+                    println!("Cancelado pelo usuário.");
+                    return Ok(());
+                }
             }
 
             // if both are passed, we prioritize dry_run as safety

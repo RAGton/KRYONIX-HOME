@@ -27,12 +27,13 @@ fn format_size(bytes: u64) -> String {
 
 /// Imprime resumo rápido do scan.
 pub fn print_scan_summary(scan: &ScanResult) {
-    println!("Kryonix Home Scan");
-    println!();
+    println!("\x1b[1mKryonix Home Scan\x1b[0m");
+    println!("──────────────────────────────────────────────────────────");
     println!("  Run ID:             {}", scan.run_id);
     println!("  Root:               {}", scan.home_dir);
     println!("  Diretórios:         {}", scan.dirs_scanned.join(", "));
     println!("  Arquivos analisados: {}", scan.files_analyzed);
+    println!("  Projetos detectados: {}", scan.projects.len());
     println!("  Arquivos ignorados:  {}", scan.files_ignored);
     println!("  Erros:              {}", scan.files_error);
     println!(
@@ -157,53 +158,112 @@ pub fn print_duplicates(groups: &[DuplicateGroup]) {
     );
 }
 
+/// Imprime lista de projetos detectados.
+pub fn print_projects(scan: &ScanResult) {
+    if scan.projects.is_empty() {
+        println!("Nenhum projeto detectado.");
+        return;
+    }
+
+    println!("\x1b[1mProjetos Detectados ({})\x1b[0m", scan.projects.len());
+    println!("──────────────────────────────────────────────────────────");
+
+    for p in &scan.projects {
+        let review = if p.needs_review { " [\x1b[33mREVISAR\x1b[0m]" } else { "" };
+        println!("▶ \x1b[1m{}\x1b[0m", p.name);
+        println!("  Caminho:    {}", p.root_path);
+        println!("  Categoria:  {}", p.category_id);
+        println!("  Marcadores: {}", p.markers.join(", "));
+        println!("  Tamanho:    {} ({} arquivos)", format_size(p.total_size_bytes), p.file_count);
+        println!("  Risco:      {} | Motivo: {}{review}", p.risk, p.reason);
+        println!();
+    }
+}
+
+/// Imprime dashboard do plano.
+pub fn print_plan_dashboard(plan: &Plan) {
+    let mut safe_count = 0;
+    let mut review_count = 0;
+    let mut conflict_count = 0;
+    let mut project_moves = 0;
+    let mut file_moves = 0;
+    let mut renames = 0;
+
+    for p in &plan.proposals {
+        if p.needs_review {
+            review_count += 1;
+        } else if p.risk == "low" {
+            safe_count += 1;
+        } else {
+            conflict_count += 1;
+        }
+
+        if p.action == "move_project" {
+            project_moves += 1;
+        } else if p.action == "move" {
+            file_moves += 1;
+        } else if p.action == "rename" {
+            renames += 1;
+        }
+    }
+
+    println!("\x1b[1m📋 Dashboard de Organização (Dry-Run)\x1b[0m");
+    println!("──────────────────────────────────────────────────────────");
+    println!("  Run ID:           {}", plan.run_id);
+    println!("  Arquivos vistos:  {}", plan.files_seen);
+    println!("  Projetos vistos:  {}", plan.projects_seen);
+    println!("──────────────────────────────────────────────────────────");
+    println!("  \x1b[32m✅ Ações Seguras:\x1b[0m      {}", safe_count);
+    println!("  \x1b[33m⚠️ Precisam de Revisão:\x1b[0m {}", review_count);
+    println!("  \x1b[31m❌ Conflitos/Risco:\x1b[0m    {}", conflict_count);
+    println!("──────────────────────────────────────────────────────────");
+    println!("  Projetos a mover:   {}", project_moves);
+    println!("  Arquivos a mover:   {}", file_moves);
+    println!("  Arquivos a renomear: {}", renames);
+    println!("──────────────────────────────────────────────────────────");
+    println!("  \x1b[1mTotal de Propostas:\x1b[0m  {}", plan.proposals.len());
+    println!();
+}
+
 /// Imprime o plano em formato legível.
 pub fn print_plan(plan: &Plan) {
-    println!("Kryonix Home Plan (dry-run)");
-    println!();
-    println!("  Run ID:        {}", plan.run_id);
-    println!("  Root:          {}", plan.home_dir);
-    println!("  Arquivos:      {}", plan.files_seen);
-    println!("  Propostas:     {}", plan.proposals.len());
-    println!();
+    print_plan_dashboard(plan);
 
     if plan.proposals.is_empty() {
         println!("Nenhuma proposta de organização.");
         return;
     }
 
-    // Agrupar por destino
-    let mut by_dest: HashMap<String, Vec<&crate::planner::PlanProposal>> = HashMap::new();
-    for p in &plan.proposals {
-        by_dest.entry(p.new_dir.clone()).or_default().push(p);
+    println!("\x1b[1mTop 10 Propostas:\x1b[0m");
+    
+    for p in plan.proposals.iter().take(10) {
+        let review = if p.needs_review { " [\x1b[33mREVISAR\x1b[0m]" } else { "" };
+        let icon = match p.action.as_str() {
+            "move_project" => "📦",
+            "rename" => "📝",
+            _ => "📄",
+        };
+
+        let risk_color = match p.risk.as_str() {
+            "low" => "\x1b[32m",
+            "medium" => "\x1b[33m",
+            "high" => "\x1b[31m",
+            _ => "",
+        };
+
+        println!(
+            "  {} {risk_color}[{:>6}]\x1b[0m {} -> {}",
+            icon, p.risk.to_uppercase(), p.old_path, p.new_dir
+        );
+        if let Some(ref nf) = p.new_filename {
+            println!("     └─ Novo Nome: {}", nf);
+        }
+        println!("     └─ Motivo: {}{review}", p.reason);
     }
 
-    let mut dest_sorted: Vec<_> = by_dest.into_iter().collect();
-    dest_sorted.sort_by_key(|b| std::cmp::Reverse(b.1.len()));
-
-    for (dest, proposals) in &dest_sorted {
-        println!("  {} ({} arquivo(s)):", dest, proposals.len());
-        for p in proposals.iter().take(5) {
-            let review = if p.needs_review { " [REVISAR]" } else { "" };
-            if p.action == "rename" {
-                if let Some(ref new_file) = p.new_filename {
-                    println!(
-                        "    [{:>6}] (RENAME) {} -> {} — {}{review}",
-                        p.risk, p.old_path, new_file, p.reason
-                    );
-                } else {
-                    println!(
-                        "    [{:>6}] (RENAME) {} — {}{review}",
-                        p.risk, p.old_path, p.reason
-                    );
-                }
-            } else {
-                println!("    [{:>6}] {} — {}{review}", p.risk, p.old_path, p.reason);
-            }
-        }
-        if proposals.len() > 5 {
-            println!("    ... e mais {} arquivo(s)", proposals.len() - 5);
-        }
+    if plan.proposals.len() > 10 {
         println!();
+        println!("  ... e mais {} propostas.", plan.proposals.len() - 10);
+        println!("  Use \x1b[1mkryonix home plan --why\x1b[0m para ver todos os detalhes.");
     }
 }

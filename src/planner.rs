@@ -37,6 +37,16 @@ pub struct PlanProposal {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub candidate_categories: Option<Vec<String>>,
     pub already_organized: bool,
+    
+    // Novos campos para projetos
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_project: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_markers: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_file_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_total_size: Option<u64>,
 }
 
 /// Plano completo de organização (dry-run).
@@ -46,6 +56,7 @@ pub struct Plan {
     pub mode: String,
     pub home_dir: String,
     pub files_seen: usize,
+    pub projects_seen: usize,
     pub proposals: Vec<PlanProposal>,
 }
 
@@ -59,120 +70,172 @@ pub fn generate_plan(
     include_large_files: bool,
     safe_only: bool,
     review_only: bool,
+    projects_only: bool,
+    limit: Option<usize>,
 ) -> Plan {
     let mut proposals = Vec::new();
     let taxonomy_config = crate::taxonomy::load_taxonomy_config(taxonomy_config_path);
 
-    for file in &scan.files {
-        if file.status != FileStatus::Analyzed {
-            continue;
-        }
-
-        if file.path.contains("/.git/") || file.path.contains("/node_modules/") {
-            continue;
-        }
-
-        // Limite de 2 GiB para arquivos grandes
-        if file.size_bytes > 2_147_483_648 && !include_large_files {
-            continue;
-        }
-
-        let mut proposal = if taxonomy_suggestions {
-            let cat = crate::taxonomy::suggest_category_config(file, &taxonomy_config);
-            PlanProposal {
-                action: "move".to_string(),
-                risk: cat.risk.clone(),
-                confidence: cat.confidence as f64,
-                old_path: file.path.clone(),
-                new_dir: cat.relative_dir.to_string_lossy().to_string(),
-                reason: cat.reason.clone(),
-                needs_review: cat.needs_review,
-                new_filename: None,
-                rules_applied: Some(cat.rules_applied.clone()),
-                naming_profile: None,
-                category_id: Some(cat.id.clone()),
-                category_label: Some(cat.label.clone()),
-                category_dir: Some(cat.relative_dir.to_string_lossy().to_string()),
-                taxonomy_score: Some(cat.confidence),
-                matched_keywords: Some(cat.matched_keywords.clone()),
-                taxonomy_reason: Some(cat.reason.clone()),
-                taxonomy_profile: Some(taxonomy_config.profile.clone()),
-                candidate_categories: cat.candidate_categories.clone(),
-                already_organized: false,
-            }
-        } else {
-            match classify_file(file) {
-                Some(p) => p,
-                None => continue,
-            }
+    // 1. Processar Projetos primeiro
+    for project in &scan.projects {
+        let taxonomy_config_ref = &taxonomy_config;
+        let mut proposal = PlanProposal {
+            action: "move_project".to_string(),
+            risk: project.risk.clone(),
+            confidence: 0.95,
+            old_path: project.root_path.clone(),
+            new_dir: String::new(), // Será preenchido abaixo
+            reason: project.reason.clone(),
+            needs_review: project.needs_review,
+            new_filename: None,
+            rules_applied: Some(project.markers.clone()),
+            naming_profile: None,
+            category_id: Some(project.category_id.clone()),
+            category_label: None,
+            category_dir: None,
+            taxonomy_score: Some(0.95),
+            matched_keywords: None,
+            taxonomy_reason: None,
+            taxonomy_profile: Some(taxonomy_config.profile.clone()),
+            candidate_categories: None,
+            already_organized: false,
+            is_project: Some(true),
+            project_markers: Some(project.markers.clone()),
+            project_file_count: Some(project.file_count),
+            project_total_size: Some(project.total_size_bytes),
         };
 
-        // Verifica se já está no diretório correto
+        // Classificar projeto pela taxonomia baseada no ID
+        if let Some(cat_config) = taxonomy_config_ref.categories.iter().find(|c| c.id == project.category_id) {
+            proposal.new_dir = cat_config.dir.clone();
+            proposal.category_label = Some(cat_config.label.clone());
+            proposal.category_dir = Some(proposal.new_dir.clone());
+        } else {
+            // Fallback se não estiver no TOML (ex: sandbox)
+            proposal.new_dir = "Projetos/Sandbox".to_string();
+            proposal.category_label = Some("Sandbox".to_string());
+        }
+
+        // Verifica se já está organizado
         let expected_dir_path = Path::new(&scan.home_dir).join(&proposal.new_dir);
-        let current_dir_path = Path::new(&file.path).parent().unwrap();
-        let in_correct_dir = current_dir_path == expected_dir_path;
+        let current_path = Path::new(&project.root_path);
+        let in_correct_dir = current_path.parent().map(|p| p == expected_dir_path).unwrap_or(false);
         proposal.already_organized = in_correct_dir;
 
-        let mut has_rename = false;
-        if rename_suggestions {
-            if let Some(suggestion) = crate::naming::suggest_rename(file) {
-                if suggestion.suggested_filename != file.filename {
-                    proposal.action = "rename".to_string();
-                    proposal.new_filename = Some(suggestion.suggested_filename);
+        if !in_correct_dir {
+            proposals.push(proposal);
+        }
+    }
 
-                    let mut rules = proposal.rules_applied.unwrap_or_default();
-                    rules.extend(suggestion.rules_applied);
-                    proposal.rules_applied = Some(rules);
+    // Se pedirmos apenas projetos, paramos aqui
+    if !projects_only {
+        // 2. Processar Arquivos Soltos
+        for file in &scan.files {
+            if file.status != FileStatus::Analyzed {
+                continue;
+            }
 
-                    proposal.naming_profile = Some(suggestion.naming_profile);
-                    proposal.needs_review = proposal.needs_review || suggestion.needs_review;
+            // O scanner já deve ter filtrado arquivos dentro de projetos se it.skip_current_dir() funcionou.
+            // Mas por segurança, se o arquivo estiver em um caminho de projeto já registrado, pulamos.
+            if scan.projects.iter().any(|p| file.path.starts_with(&p.root_path)) {
+                continue;
+            }
 
-                    if suggestion.risk == "high" {
-                        proposal.risk = "high".to_string();
-                    } else if suggestion.risk == "medium" && proposal.risk == "low" {
-                        proposal.risk = "medium".to_string();
+            // Limite de 2 GiB para arquivos grandes
+            if file.size_bytes > 2_147_483_648 && !include_large_files {
+                continue;
+            }
+
+            let mut proposal = if taxonomy_suggestions {
+                let cat = crate::taxonomy::suggest_category_config(file, &taxonomy_config);
+                PlanProposal {
+                    action: "move".to_string(),
+                    risk: cat.risk.clone(),
+                    confidence: cat.confidence as f64,
+                    old_path: file.path.clone(),
+                    new_dir: cat.relative_dir.to_string_lossy().to_string(),
+                    reason: cat.reason.clone(),
+                    needs_review: cat.needs_review,
+                    new_filename: None,
+                    rules_applied: Some(cat.rules_applied.clone()),
+                    naming_profile: None,
+                    category_id: Some(cat.id.clone()),
+                    category_label: Some(cat.label.clone()),
+                    category_dir: Some(cat.relative_dir.to_string_lossy().to_string()),
+                    taxonomy_score: Some(cat.confidence),
+                    matched_keywords: Some(cat.matched_keywords.clone()),
+                    taxonomy_reason: Some(cat.reason.clone()),
+                    taxonomy_profile: Some(taxonomy_config.profile.clone()),
+                    candidate_categories: cat.candidate_categories.clone(),
+                    already_organized: false,
+                    is_project: Some(false),
+                    project_markers: None,
+                    project_file_count: None,
+                    project_total_size: None,
+                }
+            } else {
+                match classify_file(file) {
+                    Some(p) => p,
+                    None => continue,
+                }
+            };
+
+            // Verifica se já está no diretório correto
+            let expected_dir_path = Path::new(&scan.home_dir).join(&proposal.new_dir);
+            let current_dir_path = Path::new(&file.path).parent().unwrap();
+            let in_correct_dir = current_dir_path == expected_dir_path;
+            proposal.already_organized = in_correct_dir;
+
+            let mut has_rename = false;
+            if rename_suggestions {
+                if let Some(suggestion) = crate::naming::suggest_rename(file) {
+                    if suggestion.suggested_filename != file.filename {
+                        proposal.action = "rename".to_string();
+                        proposal.new_filename = Some(suggestion.suggested_filename);
+
+                        let mut rules = proposal.rules_applied.unwrap_or_default();
+                        rules.extend(suggestion.rules_applied);
+                        proposal.rules_applied = Some(rules);
+
+                        proposal.naming_profile = Some(suggestion.naming_profile);
+                        proposal.needs_review = proposal.needs_review || suggestion.needs_review;
+
+                        if suggestion.risk == "high" {
+                            proposal.risk = "high".to_string();
+                        } else if suggestion.risk == "medium" && proposal.risk == "low" {
+                            proposal.risk = "medium".to_string();
+                        }
+                        proposal.confidence =
+                            (proposal.confidence + suggestion.confidence as f64) / 2.0;
+                        proposal.reason =
+                            format!("Move: {} | Rename: {}", proposal.reason, suggestion.reason);
+                        has_rename = true;
                     }
-                    proposal.confidence =
-                        (proposal.confidence + suggestion.confidence as f64) / 2.0;
-                    proposal.reason =
-                        format!("Move: {} | Rename: {}", proposal.reason, suggestion.reason);
-                    has_rename = true;
                 }
             }
-        }
 
-        // Se o arquivo já estiver na pasta final correta e não houver renomeação proposta, ignorar
-        if in_correct_dir && !has_rename {
-            continue;
-        }
-
-        // Aplicar filtro --safe-only se habilitado
-        if safe_only {
-            let ext_lower = file.extension.to_lowercase();
-            let is_media = file.mime.starts_with("image/")
-                || file.mime.starts_with("video/")
-                || file.mime.starts_with("audio/")
-                || matches!(
-                    ext_lower.as_str(),
-                    "jpg" | "jpeg" | "png" | "gif" | "mp4" | "mkv" | "mp3" | "flac"
-                );
-
-            if proposal.risk == "high"
-                || proposal.category_id == Some("inbox.conflicts".to_string())
-                || ext_lower.is_empty()
-                || is_media
-                || proposal.taxonomy_score.unwrap_or(1.0) < 0.75
-            {
-                continue; // Pular item inseguro
+            // Se o arquivo já estiver na pasta final correta e não houver renomeação proposta, ignorar
+            if in_correct_dir && !has_rename {
+                continue;
             }
-        }
 
-        // Aplicar filtro --review-only se habilitado
-        if review_only && !proposal.needs_review {
-            continue; // Pular item que não precisa de revisão
-        }
+            // Aplicar filtros
+            if safe_only && (proposal.risk == "high" || proposal.needs_review) {
+                continue;
+            }
+            if review_only && !proposal.needs_review {
+                continue;
+            }
 
-        proposals.push(proposal);
+            proposals.push(proposal);
+        }
+    }
+
+    // Aplicar limite se solicitado
+    if let Some(l) = limit {
+        if proposals.len() > l {
+            proposals.truncate(l);
+        }
     }
 
     Plan {
@@ -180,6 +243,7 @@ pub fn generate_plan(
         mode: "dry-run".to_string(),
         home_dir: scan.home_dir.clone(),
         files_seen: scan.files_analyzed,
+        projects_seen: scan.projects.len(),
         proposals,
     }
 }
@@ -292,5 +356,9 @@ fn classify_file(file: &FileMetadata) -> Option<PlanProposal> {
         taxonomy_profile: None,
         candidate_categories: None,
         already_organized: false,
+        is_project: None,
+        project_markers: None,
+        project_file_count: None,
+        project_total_size: None,
     })
 }

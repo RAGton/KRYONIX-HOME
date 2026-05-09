@@ -32,6 +32,7 @@ pub struct ScanResult {
     pub home_dir: String,
     pub dirs_scanned: Vec<String>,
     pub files: Vec<FileMetadata>,
+    pub projects: Vec<crate::project::ProjectCandidate>,
     pub files_analyzed: usize,
     pub files_ignored: usize,
     pub files_error: usize,
@@ -69,6 +70,7 @@ pub fn run_scan() -> Result<ScanResult> {
     let timestamp = Utc::now();
 
     let mut files: Vec<FileMetadata> = Vec::new();
+    let mut projects: Vec<crate::project::ProjectCandidate> = Vec::new();
     let mut dirs_scanned: Vec<String> = Vec::new();
 
     for dir_name in SCAN_DIRS {
@@ -78,7 +80,7 @@ pub fn run_scan() -> Result<ScanResult> {
         }
         dirs_scanned.push(dir_name.to_string());
 
-        walk_directory(&scan_path, &mut files);
+        walk_directory(&scan_path, &mut files, &mut projects);
     }
 
     let files_analyzed = files
@@ -93,11 +95,15 @@ pub fn run_scan() -> Result<ScanResult> {
         .iter()
         .filter(|f| f.status == FileStatus::Error)
         .count();
-    let total_size_bytes: u64 = files
+    
+    let mut total_size_bytes: u64 = files
         .iter()
         .filter(|f| f.status == FileStatus::Analyzed)
         .map(|f| f.size_bytes)
         .sum();
+    
+    // Adicionar tamanho dos projetos ao total
+    total_size_bytes += projects.iter().map(|p| p.total_size_bytes).sum::<u64>();
 
     Ok(ScanResult {
         run_id,
@@ -105,6 +111,7 @@ pub fn run_scan() -> Result<ScanResult> {
         home_dir: home.to_string_lossy().to_string(),
         dirs_scanned,
         files,
+        projects,
         files_analyzed,
         files_ignored,
         files_error,
@@ -113,53 +120,69 @@ pub fn run_scan() -> Result<ScanResult> {
 }
 
 /// Percorre um diretório recursivamente.
-///
-/// Regras de segurança:
-/// - follow_links(false): nunca segue symlinks
-/// - Ignora diretórios ocultos, config, cache, secrets
-/// - Ignora diretórios de projetos (markers)
-/// - Ignora arquivos secretos
-fn walk_directory(root: &Path, files: &mut Vec<FileMetadata>) {
+fn walk_directory(root: &Path, files: &mut Vec<FileMetadata>, projects: &mut Vec<crate::project::ProjectCandidate>) {
     let walker = WalkDir::new(root)
-        .follow_links(false) // NUNCA seguir symlinks
-        .same_file_system(true) // NÃO atravessar mounts externos
+        .follow_links(false)
+        .same_file_system(true)
         .into_iter();
 
-    for entry in walker.filter_entry(|e| {
+    let mut it = walker.filter_entry(|e| {
         let path = e.path();
-        // Se for diretório, checar se deve ser ignorado
         if e.file_type().is_dir() {
             if ignore::should_ignore_dir(path) {
                 return false;
             }
-            if ignore::is_project_dir(path) {
-                return false;
-            }
         }
         true
-    }) {
+    });
+
+    while let Some(entry) = it.next() {
         let entry = match entry {
             Ok(e) => e,
             Err(_) => continue,
         };
 
-        // Só processar arquivos regulares
+        let path = entry.path();
+
+        // Se for um diretório, checar se é um projeto
+        if entry.file_type().is_dir() {
+            if let Some(markers) = crate::project::detect_project_root(path) {
+                let name = path.file_name().unwrap().to_string_lossy().to_string();
+                let (category_id, reason) = crate::project::classify_project(&name, &markers);
+                let (risk, needs_review) = crate::project::calculate_project_risk(&markers);
+                
+                // Calcular estatísticas do projeto de forma recursiva (incluindo ignorados como target)
+                let (size, count) = calculate_dir_stats(path);
+
+                projects.push(crate::project::ProjectCandidate {
+                    root_path: path.to_string_lossy().to_string(),
+                    name,
+                    markers,
+                    category_id,
+                    total_size_bytes: size,
+                    file_count: count,
+                    risk,
+                    needs_review,
+                    reason,
+                });
+
+                // Pular subdiretório do projeto no scanner normal para evitar duplicidade de arquivos
+                it.skip_current_dir();
+                continue;
+            }
+        }
+
+        // Processar arquivos regulares (que não estão dentro de projetos detectados acima)
         if !entry.file_type().is_file() && !entry.file_type().is_symlink() {
             continue;
         }
 
-        let path = entry.path();
         let is_symlink = entry.file_type().is_symlink();
 
-        // Ignorar arquivos secretos ou ocultos
         if ignore::should_ignore_file(path) || ignore::is_secret_file(path) {
             files.push(FileMetadata {
                 path: path.to_string_lossy().to_string(),
-                filename: path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("")
-                    .to_string(),
+                filename: path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string(),
                 extension: String::new(),
                 mime: String::new(),
                 size_bytes: 0,
@@ -170,7 +193,6 @@ fn walk_directory(root: &Path, files: &mut Vec<FileMetadata>) {
             continue;
         }
 
-        // Symlinks são registrados mas marcados como Ignored
         if is_symlink {
             files.push(metadata::collect(path, true));
             continue;
@@ -178,6 +200,41 @@ fn walk_directory(root: &Path, files: &mut Vec<FileMetadata>) {
 
         files.push(metadata::collect(path, false));
     }
+}
+
+/// Helper para calcular estatísticas de um diretório recursivamente.
+fn calculate_dir_stats(path: &Path) -> (u64, usize) {
+    let mut total_size = 0;
+    let mut count = 0;
+
+    for entry in WalkDir::new(path)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        if entry.file_type().is_file() {
+            let meta = match entry.metadata() {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+
+            // Ignorar diretórios internos de build no cálculo de estatísticas para não inflar absurdamente?
+            // O prompt diz: "Diretórios com build/cache/vendor devem ser ignorados internamente."
+            // Vou checar se o caminho contém algum desses marcadores ignorados.
+            let path_str = entry.path().to_string_lossy();
+            let should_skip = crate::project::PROJECT_IGNORED_DIRS.iter().any(|d| {
+                let pattern = format!("/{}/", d);
+                path_str.contains(&pattern) || path_str.ends_with(format!("/{}", d).as_str())
+            });
+
+            if !should_skip {
+                total_size += meta.len();
+                count += 1;
+            }
+        }
+    }
+
+    (total_size, count)
 }
 
 /// Salva o resultado do scan em disco.

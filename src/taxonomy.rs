@@ -280,6 +280,48 @@ dir = "Vídeos/Aulas"
 keywords = ["aula", "curso", "treinamento"]
 extensions = ["mp4", "mkv", "avi"]
 risk = "low"
+# Projetos
+[[category]]
+id = "projetos.kryonix"
+label = "Kryonix Ecosystem"
+dir = "Documentos/Projetos/Kryonix"
+keywords = ["kryonix", "home-brain", "caelestia"]
+
+[[category]]
+id = "projetos.ragos"
+label = "RAGOS Framework"
+dir = "Documentos/Projetos/RAGOS"
+keywords = ["ragos", "rag", "rag-os"]
+
+[[category]]
+id = "projetos.nixos"
+label = "NixOS & Flakes"
+dir = "Documentos/Projetos/NixOS"
+keywords = ["nixos", "flake", "home-manager"]
+
+[[category]]
+id = "projetos.ia"
+label = "IA & Machine Learning"
+dir = "Documentos/Projetos/IA"
+keywords = ["ia", "ai", "llm", "training", "datasets"]
+
+[[category]]
+id = "projetos.infra"
+label = "Infraestrutura & Lab"
+dir = "Documentos/Projetos/Infra"
+keywords = ["proxmox", "server", "network", "opnsense"]
+
+[[category]]
+id = "projetos.windows"
+label = "Windows & Legacy"
+dir = "Documentos/Projetos/Windows"
+keywords = ["windows", "ativador", "office"]
+
+[[category]]
+id = "projetos.sandbox"
+label = "Projetos Sandbox"
+dir = "Documentos/Projetos/Sandbox"
+keywords = []
 "#;
 
 pub fn parse_taxonomy_toml(content: &str) -> TaxonomyConfig {

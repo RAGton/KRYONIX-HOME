@@ -64,32 +64,34 @@ pub fn run_apply(manifest: &mut Manifest, dry_run: bool) -> Result<()> {
         }
 
         // Valida hash (opcional mas importante para integridade)
-        if let Some(expected_hash) = &action.old_hash {
-            if let Ok(current_hash) = hashing::sha256_of(source) {
-                if current_hash != *expected_hash {
-                    action.status = "skipped".to_string();
-                    action.error_msg = Some("Hash alterado desde o plano".to_string());
-                    skipped += 1;
+        if action.action_type != "move_project" {
+            if let Some(expected_hash) = &action.old_hash {
+                if let Ok(current_hash) = hashing::sha256_of(source) {
+                    if current_hash != *expected_hash {
+                        action.status = "skipped".to_string();
+                        action.error_msg = Some("Hash alterado desde o plano".to_string());
+                        skipped += 1;
+                        println!(
+                            "⏭️ PULO: Arquivo alterado (hash mismatch): {}",
+                            action.source_path
+                        );
+                        continue;
+                    }
+                } else {
+                    action.status = "failed".to_string();
+                    action.error_msg = Some("Falha ao ler hash atual".to_string());
+                    failed += 1;
                     println!(
-                        "⏭️ PULO: Arquivo alterado (hash mismatch): {}",
+                        "❌ ERRO: Não foi possível ler arquivo para hash: {}",
                         action.source_path
                     );
                     continue;
                 }
-            } else {
-                action.status = "failed".to_string();
-                action.error_msg = Some("Falha ao ler hash atual".to_string());
-                failed += 1;
-                println!(
-                    "❌ ERRO: Não foi possível ler arquivo para hash: {}",
-                    action.source_path
-                );
-                continue;
             }
         }
 
-        // Somente permitir move ou rename
-        if action.action_type != "move" && action.action_type != "rename" {
+        // Somente permitir move, rename ou move_project
+        if action.action_type != "move" && action.action_type != "rename" && action.action_type != "move_project" {
             action.status = "skipped".to_string();
             action.error_msg = Some(format!(
                 "Ação não suportada ou proibida: {}",
@@ -109,9 +111,10 @@ pub fn run_apply(manifest: &mut Manifest, dry_run: bool) -> Result<()> {
                     println!("📁 DRY-RUN: Criaria diretório: {}", parent.display());
                 }
             }
+            let label = if action.action_type == "move_project" { "Projeto" } else { "Arquivo" };
             println!(
-                "✅ DRY-RUN: Moveria/Renomearia {} -> {}",
-                action.source_path, action.target_path
+                "✅ DRY-RUN: Moveria {} {} -> {}",
+                label, action.source_path, action.target_path
             );
         } else {
             // Executar de fato
@@ -129,9 +132,10 @@ pub fn run_apply(manifest: &mut Manifest, dry_run: bool) -> Result<()> {
                 Ok(_) => {
                     action.status = "executed".to_string();
                     executed += 1;
+                    let label = if action.action_type == "move_project" { "Projeto" } else { "Arquivo" };
                     println!(
-                        "✅ SUCESSO: Moveu {} -> {}",
-                        action.source_path, action.target_path
+                        "✅ SUCESSO: Moveu {} {} -> {}",
+                        label, action.source_path, action.target_path
                     );
                 }
                 Err(e) => {

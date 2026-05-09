@@ -63,9 +63,10 @@ pub fn run_rollback() -> Result<()> {
             Ok(_) => {
                 action.status = "reverted".to_string();
                 reverted += 1;
+                let label = if action.action_type == "move_project" { "Projeto" } else { "Arquivo" };
                 println!(
-                    "✅ REVERTIDO: {} <- {}",
-                    action.source_path, action.target_path
+                    "✅ REVERTIDO: {} {} <- {}",
+                    label, action.source_path, action.target_path
                 );
             }
             Err(e) => {

@@ -6,6 +6,7 @@ mod manifest;
 mod metadata;
 pub mod naming;
 mod planner;
+mod project;
 mod report;
 mod rollback;
 mod scanner;
