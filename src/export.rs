@@ -10,11 +10,13 @@ use crate::planner;
 /// Evento de arquivo unificado e achatado para exportação auditável.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FileEvent {
+    pub schema_version: String,
     pub event_id: String,
     pub timestamp: String,
     pub hostname: String,
     pub user: String,
     pub source_type: String, // "scan", "plan", "manifest", "audit"
+    pub source_run_id: String,
     pub file_path: String,
     pub file_hash: Option<String>,
     pub mime: String,
@@ -35,6 +37,7 @@ pub struct FileEvent {
     pub reason: String,
     pub source_path: String,
     pub target_path: String,
+    pub content_exported: bool,
 }
 
 /// Helper para obter o diretório de memória.
@@ -51,6 +54,24 @@ fn sha256_str(input: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(input.as_bytes());
     hex::encode(hasher.finalize())
+}
+
+fn generate_event_id(source_type: &str, run_id: &str, file_path: &str, file_hash: Option<&str>, action: &str, target_path: &str) -> String {
+    let hash_str = file_hash.unwrap_or("");
+    let input = format!("kryonix.home.memory.v1{}{}{}{}{}{}", source_type, run_id, file_path, hash_str, action, target_path);
+    format!("evt_{}", &sha256_str(&input)[..32])
+}
+
+fn is_forbidden_path(path_str: &str) -> bool {
+    let forbidden = [".config", ".local", ".cache", ".ssh", ".gnupg", ".mozilla", ".var", ".npm", ".cargo", ".rustup", ".git"];
+    Path::new(path_str).components().any(|comp| {
+        if let std::path::Component::Normal(os_str) = comp {
+            if let Some(s) = os_str.to_str() {
+                return forbidden.contains(&s);
+            }
+        }
+        false
+    })
 }
 
 /// Carrega o relatório de auditoria mais recente.
@@ -85,14 +106,18 @@ pub fn export_memory(from_source: &str, jsonl_stdout: bool, dry_run: bool) -> Re
         "latest-scan" => {
             let scan = crate::scanner::load_latest_scan()?;
             for file in &scan.files {
+                if is_forbidden_path(&file.path) { continue; }
                 let file_hash = crate::hashing::sha256_of(Path::new(&file.path)).ok();
-                let event_id = format!("evt_{}", sha256_str(&format!("scan:{}:{}", scan.run_id, file.path))[..32].to_string());
+                let event_id = generate_event_id("scan", &scan.run_id, &file.path, file_hash.as_deref(), "scan", &file.path);
+                
                 events.push(FileEvent {
+                    schema_version: "kryonix.home.memory.v1".to_string(),
                     event_id,
                     timestamp: scan.timestamp.to_rfc3339(),
                     hostname: hostname.clone(),
                     user: user.clone(),
                     source_type: "scan".to_string(),
+                    source_run_id: scan.run_id.clone(),
                     file_path: file.path.clone(),
                     file_hash,
                     mime: file.mime.clone(),
@@ -113,6 +138,7 @@ pub fn export_memory(from_source: &str, jsonl_stdout: bool, dry_run: bool) -> Re
                     reason: format!("Arquivo escaneado na run {}", scan.run_id),
                     source_path: file.path.clone(),
                     target_path: file.path.clone(),
+                    content_exported: false,
                 });
             }
         }
@@ -135,6 +161,8 @@ pub fn export_memory(from_source: &str, jsonl_stdout: bool, dry_run: bool) -> Re
             }
 
             for prop in &plan.proposals {
+                if is_forbidden_path(&prop.old_path) { continue; }
+                
                 let file_name = Path::new(&prop.old_path)
                     .file_name()
                     .unwrap_or_default()
@@ -156,14 +184,16 @@ pub fn export_memory(from_source: &str, jsonl_stdout: bool, dry_run: bool) -> Re
                     .unwrap_or(0);
 
                 let file_hash = crate::hashing::sha256_of(Path::new(&prop.old_path)).ok();
-                let event_id = format!("evt_{}", sha256_str(&format!("plan:{}:{}", plan.run_id, prop.old_path))[..32].to_string());
+                let event_id = generate_event_id("plan", &plan.run_id, &prop.old_path, file_hash.as_deref(), &prop.action, &target_path);
 
                 events.push(FileEvent {
+                    schema_version: "kryonix.home.memory.v1".to_string(),
                     event_id,
                     timestamp: scan.timestamp.to_rfc3339(),
                     hostname: hostname.clone(),
                     user: user.clone(),
                     source_type: "plan".to_string(),
+                    source_run_id: plan.run_id.clone(),
                     file_path: prop.old_path.clone(),
                     file_hash,
                     mime,
@@ -184,21 +214,26 @@ pub fn export_memory(from_source: &str, jsonl_stdout: bool, dry_run: bool) -> Re
                     reason: prop.reason.clone(),
                     source_path: prop.old_path.clone(),
                     target_path,
+                    content_exported: false,
                 });
             }
         }
         "latest-manifest" => {
             let manifest = crate::manifest::get_latest_manifest()?;
             for action in &manifest.actions {
+                if is_forbidden_path(&action.source_path) { continue; }
+                
                 let file_hash = action.old_hash.clone().or_else(|| crate::hashing::sha256_of(Path::new(&action.source_path)).ok());
-                let event_id = format!("evt_{}", sha256_str(&format!("manifest:{}:{}", manifest.run_id, action.source_path))[..32].to_string());
+                let event_id = generate_event_id("manifest", &manifest.run_id, &action.source_path, file_hash.as_deref(), &action.action_type, &action.target_path);
 
                 events.push(FileEvent {
+                    schema_version: "kryonix.home.memory.v1".to_string(),
                     event_id,
                     timestamp: manifest.timestamp.to_rfc3339(),
                     hostname: manifest.hostname.clone(),
                     user: manifest.user.clone(),
                     source_type: "manifest".to_string(),
+                    source_run_id: manifest.run_id.clone(),
                     file_path: action.source_path.clone(),
                     file_hash,
                     mime: action.mime.clone(),
@@ -219,21 +254,26 @@ pub fn export_memory(from_source: &str, jsonl_stdout: bool, dry_run: bool) -> Re
                     reason: action.reason.clone(),
                     source_path: action.source_path.clone(),
                     target_path: action.target_path.clone(),
+                    content_exported: false,
                 });
             }
         }
         "latest-audit" => {
             let audit = get_latest_audit()?;
             for action in &audit.actions {
+                if is_forbidden_path(&action.source_path) { continue; }
+
                 let file_hash = action.old_hash.clone().or_else(|| crate::hashing::sha256_of(Path::new(&action.source_path)).ok());
-                let event_id = format!("evt_{}", sha256_str(&format!("audit:{}:{}", audit.run_id, action.source_path))[..32].to_string());
+                let event_id = generate_event_id("audit", &audit.run_id, &action.source_path, file_hash.as_deref(), &action.action_type, &action.target_path);
 
                 events.push(FileEvent {
+                    schema_version: "kryonix.home.memory.v1".to_string(),
                     event_id,
                     timestamp: audit.timestamp.to_rfc3339(),
                     hostname: audit.hostname.clone(),
                     user: audit.user.clone(),
                     source_type: "audit".to_string(),
+                    source_run_id: audit.run_id.clone(),
                     file_path: action.source_path.clone(),
                     file_hash,
                     mime: action.mime.clone(),
@@ -248,45 +288,51 @@ pub fn export_memory(from_source: &str, jsonl_stdout: bool, dry_run: bool) -> Re
                     suggested_filename: action.new_filename.clone(),
                     naming_profile: action.naming_profile.clone(),
                     taxonomy_profile: action.taxonomy_profile.clone(),
-                    manifest_id: Some(audit.run_id.clone()),
+                    manifest_id: Some(audit.run_id.clone()), // Use audit run_id temporarily or extract actual manifest_id if available
                     audit_id: Some(audit.run_id.clone()),
                     action_status: action.status.clone(),
                     reason: action.reason.clone(),
                     source_path: action.source_path.clone(),
                     target_path: action.target_path.clone(),
+                    content_exported: false,
                 });
             }
         }
-        other => {
-            anyhow::bail!("Fonte de eventos desconhecida: {}", other);
+        _ => anyhow::bail!("Fonte de exportação '{}' não reconhecida. Use latest-scan, latest-plan, latest-manifest ou latest-audit", from_source),
+    }
+
+    if events.is_empty() {
+        println!("Nenhum evento válido encontrado para exportar da fonte {}.", from_source);
+        return Ok(());
+    }
+
+    let jsonl_lines: Vec<String> = events
+        .iter()
+        .map(|e| serde_json::to_string(e).unwrap())
+        .collect();
+
+    if dry_run || jsonl_stdout {
+        for line in &jsonl_lines {
+            println!("{}", line);
         }
     }
 
-    // Se jsonl_stdout for verdadeiro, imprimir cada evento compactado
-    if jsonl_stdout {
-        for ev in &events {
-            println!("{}", serde_json::to_string(ev)?);
-        }
-    }
-
-    // Se dry_run for falso, gravar os eventos no arquivo file-events.jsonl
     if !dry_run {
-        let path = memory_dir()?.join("file-events.jsonl");
+        let dest_dir = memory_dir()?;
+        let dest_file = dest_dir.join("file-events.jsonl");
+
         let mut file = OpenOptions::new()
             .create(true)
             .append(true)
-            .open(&path)?;
+            .open(&dest_file)?;
 
-        for ev in &events {
-            let json_line = format!("{}\n", serde_json::to_string(ev)?);
-            file.write_all(json_line.as_bytes())?;
+        for line in &jsonl_lines {
+            writeln!(file, "{}", line)?;
         }
-
+        
         if !jsonl_stdout {
-            eprintln!("Exportados {} eventos da fonte '{}' com sucesso para: {}", events.len(), from_source, path.display());
+            println!("Exportados {} eventos da fonte '{}' com sucesso para: {}", events.len(), from_source, dest_file.display());
         }
-    } else if !jsonl_stdout {
-        eprintln!("Dry-run: exportaria {} eventos da fonte '{}' (simulação).", events.len(), from_source);
     }
 
     Ok(())
