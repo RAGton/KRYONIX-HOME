@@ -205,6 +205,12 @@ pub fn suggest_rename(file: &FileMetadata) -> Option<RenameSuggestion> {
         title = title[..title.len() - version.len() - 1].to_string();
     }
 
+    // Evitar duplicar data se o título já começar com a data (normalizada)
+    let date_normalized = date_prefix.replace("-", "_");
+    if title.starts_with(&date_normalized) {
+        title = title[date_normalized.len()..].trim_matches('_').to_string();
+    }
+
     let ext_suffix = if ext.is_empty() {
         String::new()
     } else {
