@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-use crate::{hashing, planner, report, scanner};
+use crate::{apply, hashing, manifest, planner, report, rollback, scanner};
 
 /// Kryonix Home Brain — scanner determinístico e organizador seguro da Home
 #[derive(Parser)]
@@ -9,6 +9,14 @@ use crate::{hashing, planner, report, scanner};
 struct Cli {
     #[command(subcommand)]
     command: Commands,
+}
+
+#[derive(Subcommand)]
+enum ManifestCommands {
+    /// Cria um manifesto a partir do último plano gerado
+    Create,
+    /// Mostra o resumo do manifesto mais recente
+    Show,
 }
 
 #[derive(Subcommand)]
@@ -29,6 +37,23 @@ enum Commands {
         #[arg(long, default_value_t = true)]
         dry_run: bool,
     },
+    /// Gerencia os manifestos de ações
+    Manifest {
+        #[command(subcommand)]
+        command: ManifestCommands,
+    },
+    /// Aplica as ações do último manifesto
+    Apply {
+        /// Apenas simula as ações
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
+
+        /// Confirma e executa as ações (move/rename)
+        #[arg(long, default_value_t = false)]
+        confirm: bool,
+    },
+    /// Reverte o último apply executado
+    Rollback,
 }
 
 pub fn run() -> Result<()> {
@@ -61,6 +86,31 @@ pub fn run() -> Result<()> {
                 report::print_plan(&plan);
                 eprintln!("\nNenhuma alteração foi feita. Modo: dry-run.");
             }
+        }
+        Commands::Manifest { command } => match command {
+            ManifestCommands::Create => {
+                let scan = scanner::load_latest_scan()?;
+                let plan = planner::generate_plan(&scan);
+                manifest::create_manifest(&plan, &scan)?;
+            }
+            ManifestCommands::Show => {
+                let m = manifest::get_latest_manifest()?;
+                manifest::show_manifest(&m);
+            }
+        },
+        Commands::Apply { dry_run, confirm } => {
+            if !dry_run && !confirm {
+                eprintln!("Por segurança, você deve passar --dry-run ou --confirm para apply.");
+                std::process::exit(1);
+            }
+
+            // if both are passed, we prioritize dry_run as safety
+            let actual_dry_run = dry_run || !confirm;
+            let mut m = manifest::get_latest_manifest()?;
+            apply::run_apply(&mut m, actual_dry_run)?;
+        }
+        Commands::Rollback => {
+            rollback::run_rollback()?;
         }
     }
 

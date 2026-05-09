@@ -21,7 +21,7 @@ pub struct DuplicateGroup {
 }
 
 /// Calcula o SHA256 de um arquivo.
-fn sha256_of(path: &Path) -> Result<String> {
+pub fn sha256_of(path: &Path) -> Result<String> {
     let file = File::open(path)?;
     let mut reader = BufReader::with_capacity(HASH_BUF_SIZE, file);
     let mut hasher = Sha256::new();

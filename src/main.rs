@@ -1,9 +1,12 @@
+mod apply;
 mod cli;
 mod hashing;
 mod ignore;
+mod manifest;
 mod metadata;
 mod planner;
 mod report;
+mod rollback;
 mod scanner;
 
 fn main() {
