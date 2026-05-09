@@ -95,13 +95,13 @@ pub fn run_scan() -> Result<ScanResult> {
         .iter()
         .filter(|f| f.status == FileStatus::Error)
         .count();
-    
+
     let mut total_size_bytes: u64 = files
         .iter()
         .filter(|f| f.status == FileStatus::Analyzed)
         .map(|f| f.size_bytes)
         .sum();
-    
+
     // Adicionar tamanho dos projetos ao total
     total_size_bytes += projects.iter().map(|p| p.total_size_bytes).sum::<u64>();
 
@@ -120,7 +120,11 @@ pub fn run_scan() -> Result<ScanResult> {
 }
 
 /// Percorre um diretório recursivamente.
-fn walk_directory(root: &Path, files: &mut Vec<FileMetadata>, projects: &mut Vec<crate::project::ProjectCandidate>) {
+fn walk_directory(
+    root: &Path,
+    files: &mut Vec<FileMetadata>,
+    projects: &mut Vec<crate::project::ProjectCandidate>,
+) {
     let walker = WalkDir::new(root)
         .follow_links(false)
         .same_file_system(true)
@@ -128,10 +132,8 @@ fn walk_directory(root: &Path, files: &mut Vec<FileMetadata>, projects: &mut Vec
 
     let mut it = walker.filter_entry(|e| {
         let path = e.path();
-        if e.file_type().is_dir() {
-            if ignore::should_ignore_dir(path) {
-                return false;
-            }
+        if e.file_type().is_dir() && ignore::should_ignore_dir(path) {
+            return false;
         }
         true
     });
@@ -150,7 +152,7 @@ fn walk_directory(root: &Path, files: &mut Vec<FileMetadata>, projects: &mut Vec
                 let name = path.file_name().unwrap().to_string_lossy().to_string();
                 let (category_id, reason) = crate::project::classify_project(&name, &markers);
                 let (risk, needs_review) = crate::project::calculate_project_risk(&markers);
-                
+
                 // Calcular estatísticas do projeto de forma recursiva (incluindo ignorados como target)
                 let (size, count) = calculate_dir_stats(path);
 
@@ -182,7 +184,11 @@ fn walk_directory(root: &Path, files: &mut Vec<FileMetadata>, projects: &mut Vec
         if ignore::should_ignore_file(path) || ignore::is_secret_file(path) {
             files.push(FileMetadata {
                 path: path.to_string_lossy().to_string(),
-                filename: path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string(),
+                filename: path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("")
+                    .to_string(),
                 extension: String::new(),
                 mime: String::new(),
                 size_bytes: 0,

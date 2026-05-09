@@ -37,7 +37,7 @@ pub struct PlanProposal {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub candidate_categories: Option<Vec<String>>,
     pub already_organized: bool,
-    
+
     // Novos campos para projetos
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_project: Option<bool>,
@@ -60,21 +60,23 @@ pub struct Plan {
     pub proposals: Vec<PlanProposal>,
 }
 
+#[derive(Debug, Default, Clone)]
+pub struct PlanOptions<'a> {
+    pub rename_suggestions: bool,
+    pub taxonomy_suggestions: bool,
+    pub taxonomy_config_path: Option<&'a str>,
+    pub include_large_files: bool,
+    pub safe_only: bool,
+    pub review_only: bool,
+    pub projects_only: bool,
+    pub limit: Option<usize>,
+}
+
 /// Gera um plano de organização determinístico baseado em MIME/extensão e, opcionalmente, sugere renomeações.
 /// Este plano é SOMENTE informativo (dry-run). Nenhuma ação é executada.
-pub fn generate_plan(
-    scan: &ScanResult,
-    rename_suggestions: bool,
-    taxonomy_suggestions: bool,
-    taxonomy_config_path: Option<&str>,
-    include_large_files: bool,
-    safe_only: bool,
-    review_only: bool,
-    projects_only: bool,
-    limit: Option<usize>,
-) -> Plan {
+pub fn generate_plan(scan: &ScanResult, options: &PlanOptions) -> Plan {
     let mut proposals = Vec::new();
-    let taxonomy_config = crate::taxonomy::load_taxonomy_config(taxonomy_config_path);
+    let taxonomy_config = crate::taxonomy::load_taxonomy_config(options.taxonomy_config_path);
 
     // 1. Processar Projetos primeiro
     for project in &scan.projects {
@@ -106,7 +108,11 @@ pub fn generate_plan(
         };
 
         // Classificar projeto pela taxonomia baseada no ID
-        if let Some(cat_config) = taxonomy_config_ref.categories.iter().find(|c| c.id == project.category_id) {
+        if let Some(cat_config) = taxonomy_config_ref
+            .categories
+            .iter()
+            .find(|c| c.id == project.category_id)
+        {
             proposal.new_dir = cat_config.dir.clone();
             proposal.category_label = Some(cat_config.label.clone());
             proposal.category_dir = Some(proposal.new_dir.clone());
@@ -119,7 +125,10 @@ pub fn generate_plan(
         // Verifica se já está organizado
         let expected_dir_path = Path::new(&scan.home_dir).join(&proposal.new_dir);
         let current_path = Path::new(&project.root_path);
-        let in_correct_dir = current_path.parent().map(|p| p == expected_dir_path).unwrap_or(false);
+        let in_correct_dir = current_path
+            .parent()
+            .map(|p| p == expected_dir_path)
+            .unwrap_or(false);
         proposal.already_organized = in_correct_dir;
 
         if !in_correct_dir {
@@ -128,7 +137,7 @@ pub fn generate_plan(
     }
 
     // Se pedirmos apenas projetos, paramos aqui
-    if !projects_only {
+    if !options.projects_only {
         // 2. Processar Arquivos Soltos
         for file in &scan.files {
             if file.status != FileStatus::Analyzed {
@@ -137,16 +146,20 @@ pub fn generate_plan(
 
             // O scanner já deve ter filtrado arquivos dentro de projetos se it.skip_current_dir() funcionou.
             // Mas por segurança, se o arquivo estiver em um caminho de projeto já registrado, pulamos.
-            if scan.projects.iter().any(|p| file.path.starts_with(&p.root_path)) {
+            if scan
+                .projects
+                .iter()
+                .any(|p| file.path.starts_with(&p.root_path))
+            {
                 continue;
             }
 
             // Limite de 2 GiB para arquivos grandes
-            if file.size_bytes > 2_147_483_648 && !include_large_files {
+            if file.size_bytes > 2_147_483_648 && !options.include_large_files {
                 continue;
             }
 
-            let mut proposal = if taxonomy_suggestions {
+            let mut proposal = if options.taxonomy_suggestions {
                 let cat = crate::taxonomy::suggest_category_config(file, &taxonomy_config);
                 PlanProposal {
                     action: "move".to_string(),
@@ -187,7 +200,7 @@ pub fn generate_plan(
             proposal.already_organized = in_correct_dir;
 
             let mut has_rename = false;
-            if rename_suggestions {
+            if options.rename_suggestions {
                 if let Some(suggestion) = crate::naming::suggest_rename(file) {
                     if suggestion.suggested_filename != file.filename {
                         proposal.action = "rename".to_string();
@@ -220,10 +233,10 @@ pub fn generate_plan(
             }
 
             // Aplicar filtros
-            if safe_only && (proposal.risk == "high" || proposal.needs_review) {
+            if options.safe_only && (proposal.risk == "high" || proposal.needs_review) {
                 continue;
             }
-            if review_only && !proposal.needs_review {
+            if options.review_only && !proposal.needs_review {
                 continue;
             }
 
@@ -232,7 +245,7 @@ pub fn generate_plan(
     }
 
     // Aplicar limite se solicitado
-    if let Some(l) = limit {
+    if let Some(l) = options.limit {
         if proposals.len() > l {
             proposals.truncate(l);
         }

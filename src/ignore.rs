@@ -1,6 +1,5 @@
 use std::path::Path;
 
-
 /// Nomes de diretórios que devem ser ignorados (hidden dirs, config, cache, secrets).
 const IGNORED_DIRS: &[&str] = &[
     ".config",
@@ -67,7 +66,6 @@ pub fn should_ignore_file(path: &Path) -> bool {
 
     false
 }
-
 
 /// Retorna true se o arquivo é um secret e não deve ser processado.
 pub fn is_secret_file(path: &Path) -> bool {

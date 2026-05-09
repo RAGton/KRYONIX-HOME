@@ -91,7 +91,10 @@ pub fn run_apply(manifest: &mut Manifest, dry_run: bool) -> Result<()> {
         }
 
         // Somente permitir move, rename ou move_project
-        if action.action_type != "move" && action.action_type != "rename" && action.action_type != "move_project" {
+        if action.action_type != "move"
+            && action.action_type != "rename"
+            && action.action_type != "move_project"
+        {
             action.status = "skipped".to_string();
             action.error_msg = Some(format!(
                 "Ação não suportada ou proibida: {}",
@@ -111,7 +114,11 @@ pub fn run_apply(manifest: &mut Manifest, dry_run: bool) -> Result<()> {
                     println!("📁 DRY-RUN: Criaria diretório: {}", parent.display());
                 }
             }
-            let label = if action.action_type == "move_project" { "Projeto" } else { "Arquivo" };
+            let label = if action.action_type == "move_project" {
+                "Projeto"
+            } else {
+                "Arquivo"
+            };
             println!(
                 "✅ DRY-RUN: Moveria {} {} -> {}",
                 label, action.source_path, action.target_path
@@ -132,7 +139,11 @@ pub fn run_apply(manifest: &mut Manifest, dry_run: bool) -> Result<()> {
                 Ok(_) => {
                     action.status = "executed".to_string();
                     executed += 1;
-                    let label = if action.action_type == "move_project" { "Projeto" } else { "Arquivo" };
+                    let label = if action.action_type == "move_project" {
+                        "Projeto"
+                    } else {
+                        "Arquivo"
+                    };
                     println!(
                         "✅ SUCESSO: Moveu {} {} -> {}",
                         label, action.source_path, action.target_path

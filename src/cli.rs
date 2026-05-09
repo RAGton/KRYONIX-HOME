@@ -264,17 +264,17 @@ pub fn run() -> Result<()> {
             ..
         } => {
             let scan = scanner::load_latest_scan()?;
-            let plan = planner::generate_plan(
-                &scan,
+            let options = planner::PlanOptions {
                 rename_suggestions,
                 taxonomy_suggestions,
-                taxonomy_config.as_deref(),
+                taxonomy_config_path: taxonomy_config.as_deref(),
                 include_large_files,
                 safe_only,
                 review_only,
-                only_projects,
+                projects_only: only_projects,
                 limit,
-            );
+            };
+            let plan = planner::generate_plan(&scan, &options);
             if json {
                 println!("{}", serde_json::to_string_pretty(&plan)?);
             } else {
@@ -311,17 +311,17 @@ pub fn run() -> Result<()> {
                 review_only,
             } => {
                 let scan = scanner::load_latest_scan()?;
-                let plan = planner::generate_plan(
-                    &scan,
+                let options = planner::PlanOptions {
                     rename_suggestions,
                     taxonomy_suggestions,
-                    taxonomy_config.as_deref(),
+                    taxonomy_config_path: taxonomy_config.as_deref(),
                     include_large_files,
                     safe_only,
                     review_only,
-                    false, // only_projects default false
-                    None,  // limit default None
-                );
+                    projects_only: false,
+                    limit: None,
+                };
+                let plan = planner::generate_plan(&scan, &options);
                 manifest::create_manifest(&plan, &scan)?;
             }
             ManifestCommands::Show => {
@@ -329,7 +329,11 @@ pub fn run() -> Result<()> {
                 manifest::show_manifest(&m);
             }
         },
-        Commands::Apply { dry_run, confirm, interactive_preview } => {
+        Commands::Apply {
+            dry_run,
+            confirm,
+            interactive_preview,
+        } => {
             if !dry_run && !confirm {
                 eprintln!("Por segurança, você deve passar --dry-run ou --confirm para apply.");
                 std::process::exit(1);
@@ -355,7 +359,11 @@ pub fn run() -> Result<()> {
         Commands::Rollback => {
             rollback::run_rollback()?;
         }
-        Commands::ExportMemory { dry_run, jsonl, from } => {
+        Commands::ExportMemory {
+            dry_run,
+            jsonl,
+            from,
+        } => {
             crate::export::export_memory(&from, jsonl, dry_run)?;
         }
     }

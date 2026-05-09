@@ -154,7 +154,7 @@ risk = "medium"
 id = "estudos.nixos"
 label = "NixOS"
 dir = "Documentos/Estudos/NixOS"
-keywords = ["nixos", "nix", "flake", "home-manager"]
+keywords = ["nixos", "flake", "home-manager"]
 extensions = ["md", "nix", "txt"]
 risk = "low"
 
@@ -194,7 +194,7 @@ risk = "low"
 id = "estudos.ia_llm_rag"
 label = "IA, LLM e RAG"
 dir = "Documentos/Estudos/IA_LLM_RAG"
-keywords = ["ia", "llm", "rag", "cag", "graphrag", "ollama", "neo4j", "embedding"]
+keywords = ["llm", "rag", "cag", "graphrag", "ollama", "neo4j", "embedding"]
 extensions = ["md", "pdf", "py", "ipynb"]
 risk = "low"
 
@@ -280,18 +280,19 @@ dir = "Vídeos/Aulas"
 keywords = ["aula", "curso", "treinamento"]
 extensions = ["mp4", "mkv", "avi"]
 risk = "low"
-# Projetos
+
+# Projetos (Apenas para project.rs)
 [[category]]
 id = "projetos.kryonix"
-label = "Kryonix Ecosystem"
+label = "Ecosistema Kryonix"
 dir = "Documentos/Projetos/Kryonix"
-keywords = ["kryonix", "home-brain", "caelestia"]
+keywords = ["kryonix", "caelestia", "glacier", "inspiron", "ragos"]
 
 [[category]]
 id = "projetos.ragos"
 label = "RAGOS Framework"
 dir = "Documentos/Projetos/RAGOS"
-keywords = ["ragos", "rag", "rag-os"]
+keywords = ["ragos", "rag-os"]
 
 [[category]]
 id = "projetos.nixos"
@@ -303,7 +304,7 @@ keywords = ["nixos", "flake", "home-manager"]
 id = "projetos.ia"
 label = "IA & Machine Learning"
 dir = "Documentos/Projetos/IA"
-keywords = ["ia", "ai", "llm", "training", "datasets"]
+keywords = ["ai", "llm", "training", "datasets"]
 
 [[category]]
 id = "projetos.infra"
@@ -450,6 +451,11 @@ pub fn suggest_category_config(file: &FileMetadata, config: &TaxonomyConfig) -> 
     let mut best_matches = Vec::new();
 
     for def in &config.categories {
+        // Ignorar categorias de projeto para arquivos soltos (são tratadas por project.rs)
+        if def.id.starts_with("projetos.") {
+            continue;
+        }
+
         // Ignorar categorias de mídia se não corresponderem ao tipo
         if def.dir.starts_with("Imagens/") && !is_image {
             continue;
@@ -683,7 +689,7 @@ mod tests {
         let cat = suggest_category(&file);
         assert_eq!(
             cat.relative_dir.to_str().unwrap(),
-            "Documentos/Projetos/Kryonix"
+            "Documentos/00_Inbox/Revisar"
         );
     }
 

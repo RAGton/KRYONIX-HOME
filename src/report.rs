@@ -165,16 +165,27 @@ pub fn print_projects(scan: &ScanResult) {
         return;
     }
 
-    println!("\x1b[1mProjetos Detectados ({})\x1b[0m", scan.projects.len());
+    println!(
+        "\x1b[1mProjetos Detectados ({})\x1b[0m",
+        scan.projects.len()
+    );
     println!("──────────────────────────────────────────────────────────");
 
     for p in &scan.projects {
-        let review = if p.needs_review { " [\x1b[33mREVISAR\x1b[0m]" } else { "" };
+        let review = if p.needs_review {
+            " [\x1b[33mREVISAR\x1b[0m]"
+        } else {
+            ""
+        };
         println!("▶ \x1b[1m{}\x1b[0m", p.name);
         println!("  Caminho:    {}", p.root_path);
         println!("  Categoria:  {}", p.category_id);
         println!("  Marcadores: {}", p.markers.join(", "));
-        println!("  Tamanho:    {} ({} arquivos)", format_size(p.total_size_bytes), p.file_count);
+        println!(
+            "  Tamanho:    {} ({} arquivos)",
+            format_size(p.total_size_bytes),
+            p.file_count
+        );
         println!("  Risco:      {} | Motivo: {}{review}", p.risk, p.reason);
         println!();
     }
@@ -221,7 +232,10 @@ pub fn print_plan_dashboard(plan: &Plan) {
     println!("  Arquivos a mover:   {}", file_moves);
     println!("  Arquivos a renomear: {}", renames);
     println!("──────────────────────────────────────────────────────────");
-    println!("  \x1b[1mTotal de Propostas:\x1b[0m  {}", plan.proposals.len());
+    println!(
+        "  \x1b[1mTotal de Propostas:\x1b[0m  {}",
+        plan.proposals.len()
+    );
     println!();
 }
 
@@ -235,9 +249,13 @@ pub fn print_plan(plan: &Plan) {
     }
 
     println!("\x1b[1mTop 10 Propostas:\x1b[0m");
-    
+
     for p in plan.proposals.iter().take(10) {
-        let review = if p.needs_review { " [\x1b[33mREVISAR\x1b[0m]" } else { "" };
+        let review = if p.needs_review {
+            " [\x1b[33mREVISAR\x1b[0m]"
+        } else {
+            ""
+        };
         let icon = match p.action.as_str() {
             "move_project" => "📦",
             "rename" => "📝",
@@ -253,7 +271,10 @@ pub fn print_plan(plan: &Plan) {
 
         println!(
             "  {} {risk_color}[{:>6}]\x1b[0m {} -> {}",
-            icon, p.risk.to_uppercase(), p.old_path, p.new_dir
+            icon,
+            p.risk.to_uppercase(),
+            p.old_path,
+            p.new_dir
         );
         if let Some(ref nf) = p.new_filename {
             println!("     └─ Novo Nome: {}", nf);

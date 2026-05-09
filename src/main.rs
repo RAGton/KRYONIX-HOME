@@ -1,5 +1,6 @@
 mod apply;
 mod cli;
+mod export;
 mod hashing;
 mod ignore;
 mod manifest;
@@ -11,8 +12,6 @@ mod report;
 mod rollback;
 mod scanner;
 pub mod taxonomy;
-mod export;
-
 
 fn main() {
     if let Err(e) = cli::run() {
