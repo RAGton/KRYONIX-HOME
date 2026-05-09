@@ -85,6 +85,6 @@ pub fn find_duplicates(scan: &ScanResult) -> Result<Vec<DuplicateGroup>> {
         }
     }
 
-    groups.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes));
+    groups.sort_by_key(|b| std::cmp::Reverse(b.size_bytes));
     Ok(groups)
 }

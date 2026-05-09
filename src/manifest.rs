@@ -28,6 +28,21 @@ pub struct ManifestAction {
     pub rules_applied: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub naming_profile: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category_label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category_dir: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub taxonomy_score: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub matched_keywords: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub taxonomy_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub candidate_categories: Option<Vec<String>>,
+    pub already_organized: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -79,6 +94,12 @@ pub fn create_manifest(plan: &Plan, scan: &ScanResult) -> Result<Manifest> {
                 .to_string_lossy()
                 .to_string();
 
+            let operation_kind = if prop.action == "rename" {
+                Some("move_rename".to_string())
+            } else {
+                Some(prop.action.clone())
+            };
+
             actions.push(ManifestAction {
                 source_path: prop.old_path.clone(),
                 target_path,
@@ -94,6 +115,14 @@ pub fn create_manifest(plan: &Plan, scan: &ScanResult) -> Result<Manifest> {
                 new_filename: prop.new_filename.clone(),
                 rules_applied: prop.rules_applied.clone(),
                 naming_profile: prop.naming_profile.clone(),
+                operation_kind,
+                category_label: prop.category_label.clone(),
+                category_dir: prop.category_dir.clone(),
+                taxonomy_score: prop.taxonomy_score,
+                matched_keywords: prop.matched_keywords.clone(),
+                taxonomy_reason: prop.taxonomy_reason.clone(),
+                candidate_categories: prop.candidate_categories.clone(),
+                already_organized: prop.already_organized,
             });
         }
     }
@@ -201,6 +230,14 @@ mod tests {
                 new_filename: None,
                 rules_applied: None,
                 naming_profile: None,
+                operation_kind: Some("move".to_string()),
+                category_label: None,
+                category_dir: None,
+                taxonomy_score: None,
+                matched_keywords: None,
+                taxonomy_reason: None,
+                candidate_categories: None,
+                already_organized: false,
             }],
         };
 

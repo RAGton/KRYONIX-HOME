@@ -59,7 +59,7 @@ pub fn print_full_report(scan: &ScanResult) {
     }
 
     let mut ext_sorted: Vec<_> = ext_counts.into_iter().collect();
-    ext_sorted.sort_by(|a, b| b.1.cmp(&a.1));
+    ext_sorted.sort_by_key(|b| std::cmp::Reverse(b.1));
 
     println!();
     println!("Tipos de arquivo (top 15):");
@@ -73,7 +73,7 @@ pub fn print_full_report(scan: &ScanResult) {
         .iter()
         .filter(|f| f.status == FileStatus::Analyzed)
         .collect();
-    analyzed.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes));
+    analyzed.sort_by_key(|b| std::cmp::Reverse(b.size_bytes));
 
     println!();
     println!("Maiores arquivos (top 10):");
@@ -89,7 +89,7 @@ pub fn print_full_report(scan: &ScanResult) {
         }
     }
     let mut mime_sorted: Vec<_> = mime_sizes.into_iter().collect();
-    mime_sorted.sort_by(|a, b| b.1.cmp(&a.1));
+    mime_sorted.sort_by_key(|b| std::cmp::Reverse(b.1));
 
     println!();
     println!("Tamanho por categoria:");
@@ -179,7 +179,7 @@ pub fn print_plan(plan: &Plan) {
     }
 
     let mut dest_sorted: Vec<_> = by_dest.into_iter().collect();
-    dest_sorted.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+    dest_sorted.sort_by_key(|b| std::cmp::Reverse(b.1.len()));
 
     for (dest, proposals) in &dest_sorted {
         println!("  {} ({} arquivo(s)):", dest, proposals.len());

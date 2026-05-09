@@ -33,10 +33,33 @@ pub fn run_apply(manifest: &mut Manifest, dry_run: bool) -> Result<()> {
 
         // Valida se destino já existe
         if target.exists() {
-            action.status = "skipped".to_string();
-            action.error_msg = Some("Destino já existe".to_string());
-            skipped += 1;
-            println!("⏭️ PULO: Destino existente: {}", action.target_path);
+            let mut is_exact_duplicate = false;
+            if let Ok(source_hash) = hashing::sha256_of(source) {
+                if let Ok(target_hash) = hashing::sha256_of(target) {
+                    if source_hash == target_hash {
+                        is_exact_duplicate = true;
+                    }
+                }
+            }
+
+            if is_exact_duplicate {
+                action.status = "skipped".to_string();
+                action.error_msg =
+                    Some("Destino já existe e hash é idêntico (duplicata exata)".to_string());
+                skipped += 1;
+                println!(
+                    "⏭️ PULO: Destino existente (Duplicata exata): {}",
+                    action.target_path
+                );
+            } else {
+                action.status = "blocked".to_string();
+                action.error_msg = Some("destination_exists".to_string());
+                failed += 1;
+                println!(
+                    "❌ BLOQUEADO: Destino já existe com conteúdo diferente: {}",
+                    action.target_path
+                );
+            }
             continue;
         }
 
@@ -81,8 +104,13 @@ pub fn run_apply(manifest: &mut Manifest, dry_run: bool) -> Result<()> {
         }
 
         if dry_run {
+            if let Some(parent) = target.parent() {
+                if !parent.exists() {
+                    println!("📁 DRY-RUN: Criaria diretório: {}", parent.display());
+                }
+            }
             println!(
-                "✅ DRY-RUN: Moveria {} -> {}",
+                "✅ DRY-RUN: Moveria/Renomearia {} -> {}",
                 action.source_path, action.target_path
             );
         } else {

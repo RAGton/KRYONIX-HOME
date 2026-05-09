@@ -1,1 +1,0 @@
-cargo:rustc-env=MIME_TYPES_GENERATED_PATH=/etc/kryonix/packages/kryonix-home/target/debug/build/mime_guess-ec309b6d8a77c949/out/mime_types_generated.rs

@@ -9,6 +9,7 @@ mod planner;
 mod report;
 mod rollback;
 mod scanner;
+pub mod taxonomy;
 
 fn main() {
     if let Err(e) = cli::run() {

@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use std::path::Path;
 
 use crate::{apply, hashing, manifest, planner, report, rollback, scanner};
 
@@ -18,6 +19,26 @@ enum ManifestCommands {
         /// Incluir sugestões de renomeação ABNT-like
         #[arg(long, default_value_t = false)]
         rename_suggestions: bool,
+
+        /// Incluir sugestões de taxonomia (classificação de pastas)
+        #[arg(long, default_value_t = false)]
+        taxonomy_suggestions: bool,
+
+        /// Caminho opcional para arquivo de taxonomia TOML
+        #[arg(long)]
+        taxonomy_config: Option<String>,
+
+        /// Permitir análise e hash de arquivos maiores de 2 GiB
+        #[arg(long, default_value_t = false)]
+        include_large_files: bool,
+
+        /// Filtrar apenas por propostas 100% seguras (sem mídia, risco baixo, sem conflitos)
+        #[arg(long, default_value_t = false)]
+        safe_only: bool,
+
+        /// Filtrar apenas por propostas que precisam de revisão humana
+        #[arg(long, default_value_t = false)]
+        review_only: bool,
     },
     /// Mostra o resumo do manifesto mais recente
     Show,
@@ -31,6 +52,25 @@ enum Commands {
     Report,
     /// Lista duplicatas exatas (SHA256 idêntico)
     Duplicates,
+    /// Lista todas as categorias de taxonomia atualmente configuradas
+    Categories {
+        /// Emitir saída em formato JSON
+        #[arg(long, default_value_t = false)]
+        json: bool,
+
+        /// Caminho opcional para arquivo de taxonomia TOML
+        #[arg(long)]
+        taxonomy_config: Option<String>,
+    },
+    /// Explica por que um arquivo específico se encaixa em uma categoria e regras aplicadas
+    Explain {
+        /// Caminho para o arquivo que será analisado
+        path: String,
+
+        /// Caminho opcional para arquivo de taxonomia TOML
+        #[arg(long)]
+        taxonomy_config: Option<String>,
+    },
     /// Gera plano de organização (dry-run por padrão)
     Plan {
         /// Emitir saída em JSON ao invés de texto
@@ -44,6 +84,30 @@ enum Commands {
         /// Incluir sugestões de renomeação ABNT-like
         #[arg(long, default_value_t = false)]
         rename_suggestions: bool,
+
+        /// Incluir sugestões de taxonomia (classificação de pastas)
+        #[arg(long, default_value_t = false)]
+        taxonomy_suggestions: bool,
+
+        /// Caminho opcional para arquivo de taxonomia TOML
+        #[arg(long)]
+        taxonomy_config: Option<String>,
+
+        /// Permitir análise e hash de arquivos maiores de 2 GiB
+        #[arg(long, default_value_t = false)]
+        include_large_files: bool,
+
+        /// Filtrar apenas por propostas 100% seguras (sem mídia, risco baixo, sem conflitos)
+        #[arg(long, default_value_t = false)]
+        safe_only: bool,
+
+        /// Filtrar apenas por propostas que precisam de revisão humana
+        #[arg(long, default_value_t = false)]
+        review_only: bool,
+
+        /// Exibir explicações detalhadas por proposta no relatório de texto
+        #[arg(long, default_value_t = false)]
+        why: bool,
     },
     /// Gerencia os manifestos de ações
     Manifest {
@@ -85,24 +149,130 @@ pub fn run() -> Result<()> {
             report::print_duplicates(&groups);
             eprintln!("\nNenhuma alteração foi feita.");
         }
+        Commands::Categories {
+            json,
+            taxonomy_config,
+        } => {
+            let config = crate::taxonomy::load_taxonomy_config(taxonomy_config.as_deref());
+            if json {
+                println!("{}", serde_json::to_string_pretty(&config)?);
+            } else {
+                println!("=========================================");
+                println!("Perfil de Taxonomia Ativo:  {}", config.profile);
+                println!("Diretório de Fallback:      {}", config.fallback_dir);
+                println!("=========================================");
+                println!("\nCategorias Configuradas:");
+                for cat in &config.categories {
+                    println!("\n▶ [{}] {}", cat.id, cat.label);
+                    println!("  Destino:    {}", cat.dir);
+                    println!("  Keywords:   {}", cat.keywords.join(", "));
+                    if let Some(ref exts) = cat.extensions {
+                        println!("  Extensões:  {}", exts.join(", "));
+                    }
+                    if let Some(ref risk) = cat.risk {
+                        println!("  Risco:      {}", risk);
+                    }
+                }
+            }
+        }
+        Commands::Explain {
+            path,
+            taxonomy_config,
+        } => {
+            let file_meta = crate::metadata::collect(Path::new(&path), false);
+            let config = crate::taxonomy::load_taxonomy_config(taxonomy_config.as_deref());
+            let cat = crate::taxonomy::suggest_category_config(&file_meta, &config);
+
+            println!("=========================================");
+            println!("  Explicação de Classificação de Arquivo ");
+            println!("=========================================");
+            println!("Caminho:     {}", file_meta.path);
+            println!("Nome:        {}", file_meta.filename);
+            println!("Extensão:    {}", file_meta.extension);
+            println!("MIME:        {}", file_meta.mime);
+            println!("Tamanho:     {} bytes", file_meta.size_bytes);
+            println!("-----------------------------------------");
+            println!("Categoria:   {} ({})", cat.label, cat.id);
+            println!("Destino:     {}", cat.relative_dir.display());
+            println!("Confiança:   {:.2}", cat.confidence);
+            println!("Risco:       {}", cat.risk);
+            println!(
+                "Revisão:     {}",
+                if cat.needs_review {
+                    "Requer revisão humana"
+                } else {
+                    "Automatizado"
+                }
+            );
+            println!("Keywords:    {}", cat.matched_keywords.join(", "));
+            println!("Motivo:      {}", cat.reason);
+            if let Some(ref candidates) = cat.candidate_categories {
+                println!("Conflitos:   {}", candidates.join(", "));
+            }
+            println!("=========================================");
+        }
         Commands::Plan {
             json,
             rename_suggestions,
+            taxonomy_suggestions,
+            taxonomy_config,
+            include_large_files,
+            safe_only,
+            review_only,
+            why,
             ..
         } => {
             let scan = scanner::load_latest_scan()?;
-            let plan = planner::generate_plan(&scan, rename_suggestions);
+            let plan = planner::generate_plan(
+                &scan,
+                rename_suggestions,
+                taxonomy_suggestions,
+                taxonomy_config.as_deref(),
+                include_large_files,
+                safe_only,
+                review_only,
+            );
             if json {
                 println!("{}", serde_json::to_string_pretty(&plan)?);
             } else {
                 report::print_plan(&plan);
+                if why {
+                    println!("\n=== Detalhamento Explicativo das Propostas ===");
+                    for prop in &plan.proposals {
+                        println!("\nArquivo: {}", prop.old_path);
+                        println!("  Ação:   {} -> {}", prop.action, prop.new_dir);
+                        if let Some(ref nf) = prop.new_filename {
+                            println!("  Nome:   {}", nf);
+                        }
+                        println!("  Motivo: {}", prop.reason);
+                        println!(
+                            "  Risco:  {} | Confiança: {:.2} | Revisão: {}",
+                            prop.risk, prop.confidence, prop.needs_review
+                        );
+                    }
+                }
                 eprintln!("\nNenhuma alteração foi feita. Modo: dry-run.");
             }
         }
         Commands::Manifest { command } => match command {
-            ManifestCommands::Create { rename_suggestions } => {
+            ManifestCommands::Create {
+                rename_suggestions,
+                taxonomy_suggestions,
+                taxonomy_config,
+                include_large_files,
+                safe_only,
+                review_only,
+            } => {
                 let scan = scanner::load_latest_scan()?;
-                let plan = planner::generate_plan(&scan, rename_suggestions);
+                let plan = planner::generate_plan(
+                    &scan,
+                    rename_suggestions,
+                    taxonomy_suggestions,
+                    taxonomy_config.as_deref(),
+                    include_large_files,
+                    safe_only,
+                    review_only,
+                );
                 manifest::create_manifest(&plan, &scan)?;
             }
             ManifestCommands::Show => {

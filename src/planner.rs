@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 
 use crate::metadata::{FileMetadata, FileStatus};
 use crate::scanner::ScanResult;
@@ -19,6 +20,23 @@ pub struct PlanProposal {
     pub rules_applied: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub naming_profile: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category_label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category_dir: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub taxonomy_score: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub matched_keywords: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub taxonomy_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub taxonomy_profile: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub candidate_categories: Option<Vec<String>>,
+    pub already_organized: bool,
 }
 
 /// Plano completo de organização (dry-run).
@@ -33,25 +51,82 @@ pub struct Plan {
 
 /// Gera um plano de organização determinístico baseado em MIME/extensão e, opcionalmente, sugere renomeações.
 /// Este plano é SOMENTE informativo (dry-run). Nenhuma ação é executada.
-pub fn generate_plan(scan: &ScanResult, rename_suggestions: bool) -> Plan {
+pub fn generate_plan(
+    scan: &ScanResult,
+    rename_suggestions: bool,
+    taxonomy_suggestions: bool,
+    taxonomy_config_path: Option<&str>,
+    include_large_files: bool,
+    safe_only: bool,
+    review_only: bool,
+) -> Plan {
     let mut proposals = Vec::new();
+    let taxonomy_config = crate::taxonomy::load_taxonomy_config(taxonomy_config_path);
 
     for file in &scan.files {
         if file.status != FileStatus::Analyzed {
             continue;
         }
 
-        if let Some(mut proposal) = classify_file(file) {
-            if rename_suggestions {
-                if let Some(suggestion) = crate::naming::suggest_rename(file) {
-                    // Combinar move e rename em uma unica proposta
+        if file.path.contains("/.git/") || file.path.contains("/node_modules/") {
+            continue;
+        }
+
+        // Limite de 2 GiB para arquivos grandes
+        if file.size_bytes > 2_147_483_648 && !include_large_files {
+            continue;
+        }
+
+        let mut proposal = if taxonomy_suggestions {
+            let cat = crate::taxonomy::suggest_category_config(file, &taxonomy_config);
+            PlanProposal {
+                action: "move".to_string(),
+                risk: cat.risk.clone(),
+                confidence: cat.confidence as f64,
+                old_path: file.path.clone(),
+                new_dir: cat.relative_dir.to_string_lossy().to_string(),
+                reason: cat.reason.clone(),
+                needs_review: cat.needs_review,
+                new_filename: None,
+                rules_applied: Some(cat.rules_applied.clone()),
+                naming_profile: None,
+                category_id: Some(cat.id.clone()),
+                category_label: Some(cat.label.clone()),
+                category_dir: Some(cat.relative_dir.to_string_lossy().to_string()),
+                taxonomy_score: Some(cat.confidence),
+                matched_keywords: Some(cat.matched_keywords.clone()),
+                taxonomy_reason: Some(cat.reason.clone()),
+                taxonomy_profile: Some(taxonomy_config.profile.clone()),
+                candidate_categories: cat.candidate_categories.clone(),
+                already_organized: false,
+            }
+        } else {
+            match classify_file(file) {
+                Some(p) => p,
+                None => continue,
+            }
+        };
+
+        // Verifica se já está no diretório correto
+        let expected_dir_path = Path::new(&scan.home_dir).join(&proposal.new_dir);
+        let current_dir_path = Path::new(&file.path).parent().unwrap();
+        let in_correct_dir = current_dir_path == expected_dir_path;
+        proposal.already_organized = in_correct_dir;
+
+        let mut has_rename = false;
+        if rename_suggestions {
+            if let Some(suggestion) = crate::naming::suggest_rename(file) {
+                if suggestion.suggested_filename != file.filename {
                     proposal.action = "rename".to_string();
                     proposal.new_filename = Some(suggestion.suggested_filename);
-                    proposal.rules_applied = Some(suggestion.rules_applied);
+
+                    let mut rules = proposal.rules_applied.unwrap_or_default();
+                    rules.extend(suggestion.rules_applied);
+                    proposal.rules_applied = Some(rules);
+
                     proposal.naming_profile = Some(suggestion.naming_profile);
                     proposal.needs_review = proposal.needs_review || suggestion.needs_review;
 
-                    // Ajustar risk e confidence
                     if suggestion.risk == "high" {
                         proposal.risk = "high".to_string();
                     } else if suggestion.risk == "medium" && proposal.risk == "low" {
@@ -59,33 +134,45 @@ pub fn generate_plan(scan: &ScanResult, rename_suggestions: bool) -> Plan {
                     }
                     proposal.confidence =
                         (proposal.confidence + suggestion.confidence as f64) / 2.0;
-                    proposal.reason = format!("{} | {}", proposal.reason, suggestion.reason);
+                    proposal.reason =
+                        format!("Move: {} | Rename: {}", proposal.reason, suggestion.reason);
+                    has_rename = true;
                 }
             }
-            proposals.push(proposal);
-        } else if rename_suggestions {
-            if let Some(suggestion) = crate::naming::suggest_rename(file) {
-                // Arquivo não seria movido, mas vai ser renomeado no lugar
-                let new_dir = std::path::Path::new(&file.path)
-                    .parent()
-                    .and_then(|p| p.strip_prefix(&scan.home_dir).ok())
-                    .map(|p| p.to_string_lossy().to_string())
-                    .unwrap_or_default();
+        }
 
-                proposals.push(PlanProposal {
-                    action: "rename".to_string(),
-                    risk: suggestion.risk,
-                    confidence: suggestion.confidence as f64,
-                    old_path: file.path.clone(),
-                    new_dir,
-                    reason: suggestion.reason,
-                    needs_review: suggestion.needs_review,
-                    new_filename: Some(suggestion.suggested_filename),
-                    rules_applied: Some(suggestion.rules_applied),
-                    naming_profile: Some(suggestion.naming_profile),
-                });
+        // Se o arquivo já estiver na pasta final correta e não houver renomeação proposta, ignorar
+        if in_correct_dir && !has_rename {
+            continue;
+        }
+
+        // Aplicar filtro --safe-only se habilitado
+        if safe_only {
+            let ext_lower = file.extension.to_lowercase();
+            let is_media = file.mime.starts_with("image/")
+                || file.mime.starts_with("video/")
+                || file.mime.starts_with("audio/")
+                || matches!(
+                    ext_lower.as_str(),
+                    "jpg" | "jpeg" | "png" | "gif" | "mp4" | "mkv" | "mp3" | "flac"
+                );
+
+            if proposal.risk == "high"
+                || proposal.category_id == Some("inbox.conflicts".to_string())
+                || ext_lower.is_empty()
+                || is_media
+                || proposal.taxonomy_score.unwrap_or(1.0) < 0.75
+            {
+                continue; // Pular item inseguro
             }
         }
+
+        // Aplicar filtro --review-only se habilitado
+        if review_only && !proposal.needs_review {
+            continue; // Pular item que não precisa de revisão
+        }
+
+        proposals.push(proposal);
     }
 
     Plan {
@@ -196,5 +283,14 @@ fn classify_file(file: &FileMetadata) -> Option<PlanProposal> {
         new_filename: None,
         rules_applied: None,
         naming_profile: None,
+        category_id: None,
+        category_label: None,
+        category_dir: None,
+        taxonomy_score: None,
+        matched_keywords: None,
+        taxonomy_reason: None,
+        taxonomy_profile: None,
+        candidate_categories: None,
+        already_organized: false,
     })
 }
