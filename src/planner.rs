@@ -13,6 +13,12 @@ pub struct PlanProposal {
     pub new_dir: String,
     pub reason: String,
     pub needs_review: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub new_filename: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rules_applied: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub naming_profile: Option<String>,
 }
 
 /// Plano completo de organização (dry-run).
@@ -25,9 +31,9 @@ pub struct Plan {
     pub proposals: Vec<PlanProposal>,
 }
 
-/// Gera um plano de organização determinístico baseado em MIME/extensão.
+/// Gera um plano de organização determinístico baseado em MIME/extensão e, opcionalmente, sugere renomeações.
 /// Este plano é SOMENTE informativo (dry-run). Nenhuma ação é executada.
-pub fn generate_plan(scan: &ScanResult) -> Plan {
+pub fn generate_plan(scan: &ScanResult, rename_suggestions: bool) -> Plan {
     let mut proposals = Vec::new();
 
     for file in &scan.files {
@@ -35,8 +41,49 @@ pub fn generate_plan(scan: &ScanResult) -> Plan {
             continue;
         }
 
-        if let Some(proposal) = classify_file(file) {
+        if let Some(mut proposal) = classify_file(file) {
+            if rename_suggestions {
+                if let Some(suggestion) = crate::naming::suggest_rename(file) {
+                    // Combinar move e rename em uma unica proposta
+                    proposal.action = "rename".to_string();
+                    proposal.new_filename = Some(suggestion.suggested_filename);
+                    proposal.rules_applied = Some(suggestion.rules_applied);
+                    proposal.naming_profile = Some(suggestion.naming_profile);
+                    proposal.needs_review = proposal.needs_review || suggestion.needs_review;
+                    
+                    // Ajustar risk e confidence
+                    if suggestion.risk == "high" {
+                        proposal.risk = "high".to_string();
+                    } else if suggestion.risk == "medium" && proposal.risk == "low" {
+                        proposal.risk = "medium".to_string();
+                    }
+                    proposal.confidence = (proposal.confidence + suggestion.confidence as f64) / 2.0;
+                    proposal.reason = format!("{} | {}", proposal.reason, suggestion.reason);
+                }
+            }
             proposals.push(proposal);
+        } else if rename_suggestions {
+            if let Some(suggestion) = crate::naming::suggest_rename(file) {
+                // Arquivo não seria movido, mas vai ser renomeado no lugar
+                let new_dir = std::path::Path::new(&file.path)
+                    .parent()
+                    .and_then(|p| p.strip_prefix(&scan.home_dir).ok())
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_default();
+
+                proposals.push(PlanProposal {
+                    action: "rename".to_string(),
+                    risk: suggestion.risk,
+                    confidence: suggestion.confidence as f64,
+                    old_path: file.path.clone(),
+                    new_dir,
+                    reason: suggestion.reason,
+                    needs_review: suggestion.needs_review,
+                    new_filename: Some(suggestion.suggested_filename),
+                    rules_applied: Some(suggestion.rules_applied),
+                    naming_profile: Some(suggestion.naming_profile),
+                });
+            }
         }
     }
 
@@ -145,5 +192,8 @@ fn classify_file(file: &FileMetadata) -> Option<PlanProposal> {
         new_dir: new_dir.to_string(),
         reason: reason.to_string(),
         needs_review: confidence < 0.70,
+        new_filename: None,
+        rules_applied: None,
+        naming_profile: None,
     })
 }

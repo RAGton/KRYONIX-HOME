@@ -1,3 +1,4 @@
+pub mod naming;
 mod apply;
 mod cli;
 mod hashing;

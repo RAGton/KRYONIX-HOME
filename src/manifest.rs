@@ -20,6 +20,14 @@ pub struct ManifestAction {
     pub risk: String,
     pub status: String, // "planned", "executed", "skipped", "failed"
     pub error_msg: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub old_filename: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub new_filename: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rules_applied: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub naming_profile: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -63,9 +71,11 @@ pub fn create_manifest(plan: &Plan, scan: &ScanResult) -> Result<Manifest> {
                 .unwrap_or_default()
                 .to_string_lossy();
 
+            let target_file_name = prop.new_filename.as_deref().unwrap_or(file_name.as_ref());
+
             let target_path = Path::new(&plan.home_dir)
                 .join(&prop.new_dir)
-                .join(file_name.as_ref())
+                .join(target_file_name)
                 .to_string_lossy()
                 .to_string();
 
@@ -80,6 +90,10 @@ pub fn create_manifest(plan: &Plan, scan: &ScanResult) -> Result<Manifest> {
                 risk: prop.risk.clone(),
                 status: "planned".to_string(),
                 error_msg: None,
+                old_filename: Some(file_name.into_owned()),
+                new_filename: prop.new_filename.clone(),
+                rules_applied: prop.rules_applied.clone(),
+                naming_profile: prop.naming_profile.clone(),
             });
         }
     }
@@ -183,6 +197,10 @@ mod tests {
                 risk: "low".to_string(),
                 status: "planned".to_string(),
                 error_msg: None,
+                old_filename: None,
+                new_filename: None,
+                rules_applied: None,
+                naming_profile: None,
             }],
         };
 

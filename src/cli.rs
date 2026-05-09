@@ -13,8 +13,12 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum ManifestCommands {
-    /// Cria um manifesto a partir do último plano gerado
-    Create,
+    /// Cria um manifesto a partir do último scan
+    Create {
+        /// Incluir sugestões de renomeação ABNT-like
+        #[arg(long, default_value_t = false)]
+        rename_suggestions: bool,
+    },
     /// Mostra o resumo do manifesto mais recente
     Show,
 }
@@ -36,6 +40,10 @@ enum Commands {
         /// Modo dry-run (padrão; existe para documentação)
         #[arg(long, default_value_t = true)]
         dry_run: bool,
+
+        /// Incluir sugestões de renomeação ABNT-like
+        #[arg(long, default_value_t = false)]
+        rename_suggestions: bool,
     },
     /// Gerencia os manifestos de ações
     Manifest {
@@ -77,9 +85,9 @@ pub fn run() -> Result<()> {
             report::print_duplicates(&groups);
             eprintln!("\nNenhuma alteração foi feita.");
         }
-        Commands::Plan { json, .. } => {
+        Commands::Plan { json, rename_suggestions, .. } => {
             let scan = scanner::load_latest_scan()?;
-            let plan = planner::generate_plan(&scan);
+            let plan = planner::generate_plan(&scan, rename_suggestions);
             if json {
                 println!("{}", serde_json::to_string_pretty(&plan)?);
             } else {
@@ -88,9 +96,9 @@ pub fn run() -> Result<()> {
             }
         }
         Commands::Manifest { command } => match command {
-            ManifestCommands::Create => {
+            ManifestCommands::Create { rename_suggestions } => {
                 let scan = scanner::load_latest_scan()?;
-                let plan = planner::generate_plan(&scan);
+                let plan = planner::generate_plan(&scan, rename_suggestions);
                 manifest::create_manifest(&plan, &scan)?;
             }
             ManifestCommands::Show => {

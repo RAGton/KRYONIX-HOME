@@ -185,7 +185,15 @@ pub fn print_plan(plan: &Plan) {
         println!("  {} ({} arquivo(s)):", dest, proposals.len());
         for p in proposals.iter().take(5) {
             let review = if p.needs_review { " [REVISAR]" } else { "" };
-            println!("    [{:>6}] {} — {}{review}", p.risk, p.old_path, p.reason);
+            if p.action == "rename" {
+                if let Some(ref new_file) = p.new_filename {
+                    println!("    [{:>6}] (RENAME) {} -> {} — {}{review}", p.risk, p.old_path, new_file, p.reason);
+                } else {
+                    println!("    [{:>6}] (RENAME) {} — {}{review}", p.risk, p.old_path, p.reason);
+                }
+            } else {
+                println!("    [{:>6}] {} — {}{review}", p.risk, p.old_path, p.reason);
+            }
         }
         if proposals.len() > 5 {
             println!("    ... e mais {} arquivo(s)", proposals.len() - 5);
