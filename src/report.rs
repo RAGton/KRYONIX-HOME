@@ -236,6 +236,19 @@ pub fn print_plan_dashboard(plan: &Plan) {
         "  \x1b[1mTotal de Propostas:\x1b[0m  {}",
         plan.proposals.len()
     );
+    let downloads_count = plan
+        .proposals
+        .iter()
+        .filter(|p| p.old_path.to_lowercase().contains("/downloads/"))
+        .count();
+    if downloads_count > 0 {
+        println!("──────────────────────────────────────────────────────────");
+        println!(
+            "  \x1b[33m⚠️  Downloads pendentes de organização:\x1b[0m {}",
+            downloads_count
+        );
+        println!("     (Estes arquivos serão movidos para as categorias ou zona de revisão)");
+    }
     println!();
 }
 
