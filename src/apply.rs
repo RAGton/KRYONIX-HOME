@@ -1,11 +1,47 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use chrono::Utc;
 
 use crate::hashing;
 use crate::manifest::{audits_dir, Manifest};
+
+/// Limpa recursivamente pastas vazias a partir do caminho de origem de um arquivo movido,
+/// parando ao encontrar o diretório home ou uma pasta não vazia.
+fn cleanup_empty_parents(source_path: &str) {
+    let mut current = Path::new(source_path).parent();
+    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/home/rocha"));
+
+    while let Some(path) = current {
+        // Impede a deleção da raiz da home ou caminhos fora dela
+        if path == home || !path.starts_with(&home) {
+            break;
+        }
+
+        // Verifica se a pasta está vazia
+        if let Ok(mut entries) = fs::read_dir(path) {
+            if entries.next().is_none() {
+                println!("🧹 Limpando pasta que ficou vazia: {}", path.display());
+                if let Err(e) = fs::remove_dir(path) {
+                    eprintln!(
+                        "Aviso: Falha ao remover pasta vazia {}: {}",
+                        path.display(),
+                        e
+                    );
+                    break;
+                }
+            } else {
+                // Pasta não está vazia, podemos parar o fluxo de subida
+                break;
+            }
+        } else {
+            break;
+        }
+
+        current = path.parent();
+    }
+}
 
 pub fn run_apply(manifest: &mut Manifest, dry_run: bool) -> Result<()> {
     println!("Iniciando Apply (dry-run: {})", dry_run);
@@ -148,6 +184,9 @@ pub fn run_apply(manifest: &mut Manifest, dry_run: bool) -> Result<()> {
                         "✅ SUCESSO: Moveu {} {} -> {}",
                         label, action.source_path, action.target_path
                     );
+
+                    // Limpar pastas vazias recursivamente
+                    cleanup_empty_parents(&action.source_path);
                 }
                 Err(e) => {
                     action.status = "failed".to_string();

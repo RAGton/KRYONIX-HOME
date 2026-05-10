@@ -25,7 +25,7 @@ const SCAN_DIRS: &[&str] = &[
 ];
 
 /// Resultado completo de um scan.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanResult {
     pub run_id: String,
     pub timestamp: DateTime<Utc>,
@@ -66,6 +66,10 @@ fn generate_run_id() -> String {
 
 /// Executa o scan da Home do usuário.
 pub fn run_scan() -> Result<ScanResult> {
+    run_scan_options(false)
+}
+
+pub fn run_scan_options(full_home: bool) -> Result<ScanResult> {
     let home = dirs::home_dir().context("Não foi possível determinar o diretório home")?;
     let run_id = generate_run_id();
     let timestamp = Utc::now();
@@ -75,14 +79,19 @@ pub fn run_scan() -> Result<ScanResult> {
     let mut dirs_scanned: Vec<String> = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
 
-    for dir_name in SCAN_DIRS {
-        let scan_path = home.join(dir_name);
-        if !scan_path.exists() || !scan_path.is_dir() {
-            continue;
-        }
-        dirs_scanned.push(dir_name.to_string());
+    if full_home {
+        dirs_scanned.push("~".to_string());
+        walk_directory(&home, &mut files, &mut projects, &mut warnings, true);
+    } else {
+        for dir_name in SCAN_DIRS {
+            let scan_path = home.join(dir_name);
+            if !scan_path.exists() || !scan_path.is_dir() {
+                continue;
+            }
+            dirs_scanned.push(dir_name.to_string());
 
-        walk_directory(&scan_path, &mut files, &mut projects, &mut warnings);
+            walk_directory(&scan_path, &mut files, &mut projects, &mut warnings, false);
+        }
     }
 
     let files_analyzed = files
@@ -128,6 +137,7 @@ fn walk_directory(
     files: &mut Vec<FileMetadata>,
     projects: &mut Vec<crate::project::ProjectCandidate>,
     warnings: &mut Vec<String>,
+    full_home: bool,
 ) {
     let walker = WalkDir::new(root)
         .follow_links(false)
@@ -136,7 +146,7 @@ fn walk_directory(
 
     let mut it = walker.filter_entry(|e| {
         let path = e.path();
-        if e.file_type().is_dir() && ignore::should_ignore_dir(path) {
+        if e.file_type().is_dir() && ignore::should_ignore_dir_options(path, full_home) {
             return false;
         }
         true
@@ -221,7 +231,9 @@ fn walk_directory(
 
         let is_symlink = entry.file_type().is_symlink();
 
-        if ignore::should_ignore_file(path) || ignore::is_secret_file(path) {
+        if ignore::should_ignore_file_options(path, full_home)
+            || (!full_home && ignore::is_secret_file(path))
+        {
             files.push(FileMetadata {
                 path: path.to_string_lossy().to_string(),
                 filename: path
@@ -233,7 +245,18 @@ fn walk_directory(
                 mime: String::new(),
                 size_bytes: 0,
                 modified_at: None,
+                is_dir: false,
+                is_file: true,
                 is_symlink,
+                is_hidden: crate::metadata::is_hidden_path(path),
+                is_project_member: false,
+                project_root: None,
+                source_zone: Some("unknown".to_string()),
+                readable: false,
+                content_sampled: false,
+                metadata_only: true,
+                protected_reason: Some("Ignored or secret file".to_string()),
+                warnings: vec!["Ignored or secret file".to_string()],
                 status: FileStatus::Ignored,
             });
             continue;

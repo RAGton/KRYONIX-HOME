@@ -39,6 +39,10 @@ enum ManifestCommands {
         /// Filtrar apenas por propostas que precisam de revisão humana
         #[arg(long, default_value_t = false)]
         review_only: bool,
+
+        /// Utiliza o Ollama Advisor para classificação de taxonomia
+        #[arg(long, default_value_t = false)]
+        ollama: bool,
     },
     /// Mostra o resumo do manifesto mais recente
     Show,
@@ -47,7 +51,11 @@ enum ManifestCommands {
 #[derive(Subcommand)]
 enum Commands {
     /// Escaneia a Home e salva resultado em JSON
-    Scan,
+    Scan {
+        /// Realiza um scan completo de toda a Home, com proteção contra vazamento
+        #[arg(long, default_value_t = false)]
+        full_home: bool,
+    },
     /// Mostra relatório do último scan
     Report,
     /// Lista duplicatas exatas (SHA256 idêntico)
@@ -72,6 +80,15 @@ enum Commands {
         /// Caminho opcional para arquivo de taxonomia TOML
         #[arg(long)]
         taxonomy_config: Option<String>,
+    },
+    /// Diagnostica um arquivo de forma detalhada e estilizada, ou em formato JSON
+    Diagnose {
+        /// Caminho do arquivo a ser diagnosticado
+        path: String,
+
+        /// Força a saída no formato puramente JSON
+        #[arg(long, default_value_t = false)]
+        json: bool,
     },
     /// Gera plano de organização (dry-run por padrão)
     Plan {
@@ -122,6 +139,14 @@ enum Commands {
         /// Exibir explicações detalhadas por proposta no relatório de texto
         #[arg(long, default_value_t = false)]
         why: bool,
+
+        /// Realiza o plano assumindo um scan completo
+        #[arg(long, default_value_t = false)]
+        full_home: bool,
+
+        /// Utiliza o Ollama Advisor para classificação de taxonomia
+        #[arg(long, default_value_t = false)]
+        ollama: bool,
     },
     /// Gerencia os manifestos de ações
     Manifest {
@@ -165,8 +190,8 @@ pub fn run() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Scan => {
-            let scan = scanner::run_scan()?;
+        Commands::Scan { full_home } => {
+            let scan = scanner::run_scan_options(full_home)?;
             scanner::save_scan(&scan)?;
             report::print_scan_summary(&scan);
             eprintln!("\nNenhuma alteração foi feita.");
@@ -249,6 +274,115 @@ pub fn run() -> Result<()> {
             }
             println!("=========================================");
         }
+        Commands::Diagnose { path, json } => {
+            let file_meta = crate::metadata::collect(Path::new(&path), false);
+            let config = crate::taxonomy::load_taxonomy_config(None);
+            let cat = crate::taxonomy::suggest_category_config(&file_meta, &config);
+            let rename_sug = crate::naming::suggest_rename(&file_meta);
+
+            if json {
+                let diagnostic_json = serde_json::json!({
+                    "path": file_meta.path,
+                    "filename": file_meta.filename,
+                    "extension": file_meta.extension,
+                    "mime": file_meta.mime,
+                    "size_bytes": file_meta.size_bytes,
+                    "metadata_only": file_meta.metadata_only,
+                    "protected_reason": file_meta.protected_reason,
+                    "readable": file_meta.readable,
+                    "source_zone": file_meta.source_zone,
+                    "taxonomy": {
+                        "category_id": cat.id,
+                        "label": cat.label,
+                        "target_dir": cat.relative_dir.to_string_lossy(),
+                        "confidence": cat.confidence,
+                        "risk": cat.risk,
+                        "needs_review": cat.needs_review,
+                        "reason": cat.reason,
+                        "matched_keywords": cat.matched_keywords,
+                    },
+                    "naming": {
+                        "suggested_filename": rename_sug.as_ref().map(|s| &s.suggested_filename),
+                        "reason": rename_sug.as_ref().map(|s| &s.reason),
+                    }
+                });
+                println!("{}", serde_json::to_string_pretty(&diagnostic_json)?);
+            } else {
+                println!(
+                    "╭──────────────────────────────────────────────────────────────────────────╮"
+                );
+                println!(
+                    "│                      🔍 DIAGNÓSTICO DE ARQUIVO                           │"
+                );
+                println!(
+                    "├──────────────────────────────────────────────────────────────────────────┤"
+                );
+                println!("│ 📁 Caminho:   {}", file_meta.path);
+                println!("│ 📄 Nome:      {}", file_meta.filename);
+                println!(
+                    "│ 🔌 Ext/MIME:  {} | {}",
+                    file_meta.extension, file_meta.mime
+                );
+                println!("│ ⚖️ Tamanho:   {} bytes", file_meta.size_bytes);
+                println!(
+                    "│ 🔒 Protegido: {}",
+                    if file_meta.metadata_only {
+                        format!(
+                            "Sim (Motivo: {})",
+                            file_meta
+                                .protected_reason
+                                .as_deref()
+                                .unwrap_or("Confidencial")
+                        )
+                    } else {
+                        "Não".to_string()
+                    }
+                );
+                println!(
+                    "│ 🌐 Origem:    {}",
+                    file_meta.source_zone.as_deref().unwrap_or("unknown")
+                );
+                println!(
+                    "├──────────────────────────────────────────────────────────────────────────┤"
+                );
+                println!(
+                    "│                      🏷️ CLASSIFICAÇÃO TAXONÔMICA                         │"
+                );
+                println!(
+                    "├──────────────────────────────────────────────────────────────────────────┤"
+                );
+                println!("│ Categoria:   {} ({})", cat.label, cat.id);
+                println!("│ Destino:     {}", cat.relative_dir.display());
+                println!(
+                    "│ Confiança:   {:.2} | Risco: {} | Revisão: {}",
+                    cat.confidence,
+                    cat.risk,
+                    if cat.needs_review { "Sim" } else { "Não" }
+                );
+                println!("│ Motivo:      {}", cat.reason);
+                if !cat.matched_keywords.is_empty() {
+                    println!("│ Palavras:    {}", cat.matched_keywords.join(", "));
+                }
+                println!(
+                    "├──────────────────────────────────────────────────────────────────────────┤"
+                );
+                println!(
+                    "│                      📝 SUGESTÃO DE NOME (ABNT)                          │"
+                );
+                println!(
+                    "├──────────────────────────────────────────────────────────────────────────┤"
+                );
+                if let Some(rename) = rename_sug {
+                    println!("│ Novo Nome:   {}", rename.suggested_filename);
+                    println!("│ Motivo:      {}", rename.reason);
+                } else {
+                    println!("│ Nome sugerido: Nenhuma alteração recomendada.");
+                }
+                println!(
+                    "╰──────────────────────────────────────────────────────────────────────────╯"
+                );
+            }
+        }
         Commands::Plan {
             json,
             rename_suggestions,
@@ -261,9 +395,15 @@ pub fn run() -> Result<()> {
             limit,
             summary,
             why,
-            ..
+            full_home,
+            ollama,
+            dry_run: _,
         } => {
-            let scan = scanner::load_latest_scan()?;
+            let scan = if full_home {
+                scanner::run_scan_options(true)?
+            } else {
+                scanner::load_latest_scan()?
+            };
             let options = planner::PlanOptions {
                 rename_suggestions,
                 taxonomy_suggestions,
@@ -273,6 +413,7 @@ pub fn run() -> Result<()> {
                 review_only,
                 projects_only: only_projects,
                 limit,
+                ollama,
             };
             let plan = planner::generate_plan(&scan, &options);
             if json {
@@ -309,6 +450,7 @@ pub fn run() -> Result<()> {
                 include_large_files,
                 safe_only,
                 review_only,
+                ollama,
             } => {
                 let scan = scanner::load_latest_scan()?;
                 let options = planner::PlanOptions {
@@ -320,6 +462,7 @@ pub fn run() -> Result<()> {
                     review_only,
                     projects_only: false,
                     limit: None,
+                    ollama,
                 };
                 let plan = planner::generate_plan(&scan, &options);
                 manifest::create_manifest(&plan, &scan)?;

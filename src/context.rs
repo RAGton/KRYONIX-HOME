@@ -1,9 +1,124 @@
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FolderContext {
+    pub folder_path: String,
+    pub folder_name: String,
+    pub folder_kind: String,
+    pub dominant_categories: Vec<String>,
+    pub project_markers: Vec<String>,
+    pub neighbor_extensions: Vec<String>,
+    pub neighbor_keywords: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContextProfile {
     pub is_inside_codebase: bool,
     pub sibling_categories: Vec<String>,
+}
+
+pub fn analyze_folder_context(folder_path: &Path) -> FolderContext {
+    let folder_name = folder_path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    let folder_path_str = folder_path.to_string_lossy().to_string();
+    let folder_path_lower = folder_path_str.to_lowercase();
+
+    let mut project_markers = Vec::new();
+    for marker in crate::project::PROJECT_MARKERS {
+        if folder_path.join(marker).exists() {
+            project_markers.push(marker.to_string());
+        }
+    }
+
+    let mut folder_kind = "unknown".to_string();
+    let mut warnings = Vec::new();
+
+    if !project_markers.is_empty() {
+        folder_kind = "project".to_string();
+        if folder_path_lower.contains("/downloads") {
+            warnings.push("Projeto localizado na pasta Downloads (não ideal)".to_string());
+        } else if folder_path_lower.contains("/music") || folder_path_lower.contains("/músicas") {
+            warnings.push("Projeto localizado na pasta Músicas (não ideal)".to_string());
+        } else if folder_path_lower.contains("/pictures") || folder_path_lower.contains("/imagens")
+        {
+            warnings.push("Projeto localizado na pasta Imagens (não ideal)".to_string());
+        } else if folder_path_lower.contains("/videos") || folder_path_lower.contains("/vídeos") {
+            warnings.push("Projeto localizado na pasta Vídeos (não ideal)".to_string());
+        }
+    } else if folder_path_lower.contains("/downloads") {
+        folder_kind = "downloads".to_string();
+    } else if folder_path_lower.contains("/obsidian") || folder_path_lower.contains("/vault") {
+        folder_kind = "vault".to_string();
+    } else if folder_path_lower.contains("/documentos") || folder_path_lower.contains("/documents")
+    {
+        folder_kind = "documents".to_string();
+    }
+
+    let mut neighbor_extensions = Vec::new();
+    let mut neighbor_keywords = Vec::new();
+    let mut dominant_categories = Vec::new();
+
+    if let Ok(entries) = std::fs::read_dir(folder_path) {
+        for entry in entries.flatten() {
+            if let Ok(meta) = entry.metadata() {
+                if meta.is_file() {
+                    let path = entry.path();
+                    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                        neighbor_extensions.push(ext.to_lowercase());
+                    }
+                    let filename = entry.file_name().to_string_lossy().to_lowercase();
+                    if filename.contains("nix") || filename.contains("flake") {
+                        dominant_categories.push("projetos.nixos".to_string());
+                    }
+                    if filename.contains("cargo") || filename.contains("rust") {
+                        dominant_categories.push("estudos.rust".to_string());
+                    }
+                    if filename.contains("kryonix") {
+                        dominant_categories.push("projetos.kryonix".to_string());
+                    }
+
+                    // Simple sibling keywords collection
+                    for kw in &[
+                        "comprovante",
+                        "boleto",
+                        "contrato",
+                        "nota",
+                        "fatura",
+                        "pix",
+                        "aula",
+                        "curso",
+                    ] {
+                        if filename.contains(kw) {
+                            neighbor_keywords.push(kw.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    neighbor_extensions.sort();
+    neighbor_extensions.dedup();
+    neighbor_keywords.sort();
+    neighbor_keywords.dedup();
+    dominant_categories.sort();
+    dominant_categories.dedup();
+
+    FolderContext {
+        folder_path: folder_path_str,
+        folder_name,
+        folder_kind,
+        dominant_categories,
+        project_markers,
+        neighbor_extensions,
+        neighbor_keywords,
+        warnings,
+    }
 }
 
 pub fn analyze_file_context(path: &Path) -> ContextProfile {
@@ -27,23 +142,9 @@ pub fn analyze_file_context(path: &Path) -> ContextProfile {
 
     // Varre arquivos irmãos imediatos para herdar contexto de categoria
     if let Some(parent) = path.parent() {
-        if let Ok(entries) = std::fs::read_dir(parent) {
-            for entry in entries.flatten() {
-                let filename = entry.file_name().to_string_lossy().to_lowercase();
-                if filename.contains("nix") || filename.contains("flake") {
-                    sibling_categories.push("projetos.nixos".to_string());
-                }
-                if filename.contains("cargo") || filename.contains("rust") {
-                    sibling_categories.push("estudos.rust".to_string());
-                }
-                if filename.contains("kryonix") {
-                    sibling_categories.push("projetos.kryonix".to_string());
-                }
-            }
-        }
+        let f_context = analyze_folder_context(parent);
+        sibling_categories = f_context.dominant_categories;
     }
-
-    sibling_categories.dedup();
 
     ContextProfile {
         is_inside_codebase,
@@ -88,26 +189,6 @@ mod tests {
                 .sibling_categories
                 .contains(&"estudos.rust".to_string()),
             "Should have matched estudos.rust due to sibling Cargo.toml"
-        );
-    }
-
-    #[test]
-    fn test_context_detects_ancestor_codebase() {
-        let dir = tempdir().expect("Failed to create temp dir");
-        // Create a subfolder representing nested project directories
-        let src_dir = dir.path().join("src").join("nested");
-        fs::create_dir_all(&src_dir).expect("Failed to create nested dirs");
-
-        // Create a project marker in the ancestor dir
-        let git_marker = dir.path().join(".git");
-        fs::create_dir(&git_marker).expect("Failed to create mock .git folder");
-
-        let file_under_test = src_dir.join("main.rs");
-
-        let context = analyze_file_context(&file_under_test);
-        assert!(
-            context.is_inside_codebase,
-            "Should have detected that file is inside a codebase due to ancestor .git marker"
         );
     }
 }

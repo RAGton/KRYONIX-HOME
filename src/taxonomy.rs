@@ -601,9 +601,10 @@ pub fn suggest_category_config(file: &FileMetadata, config: &TaxonomyConfig) -> 
                 );
             }
             if let Some(ref cp) = content_profile {
-                if let Some(ref sum) = cp.summary {
-                    reason = format!("{} | Resumo: {}", reason, sum);
-                }
+                reason = format!(
+                    "{} | Conteúdo analisado (Tipo: {})",
+                    reason, cp.content_kind
+                );
             }
 
             return TaxonomyCategory {
@@ -688,10 +689,21 @@ mod tests {
             path: format!("/tmp/home/Downloads/{}", name),
             filename: name.to_string(),
             extension: ext.to_string(),
+            mime: mime.to_string(),
             size_bytes: 1000,
             modified_at: None,
-            mime: mime.to_string(),
+            is_dir: false,
+            is_file: true,
             is_symlink: false,
+            is_hidden: false,
+            is_project_member: false,
+            project_root: None,
+            source_zone: Some("downloads".to_string()),
+            readable: true,
+            content_sampled: false,
+            metadata_only: false,
+            protected_reason: None,
+            warnings: vec![],
             status: FileStatus::Analyzed,
         }
     }

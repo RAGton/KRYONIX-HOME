@@ -70,6 +70,7 @@ pub struct PlanOptions<'a> {
     pub review_only: bool,
     pub projects_only: bool,
     pub limit: Option<usize>,
+    pub ollama: bool,
 }
 
 /// Gera um plano de organização determinístico baseado em MIME/extensão e, opcionalmente, sugere renomeações.
@@ -165,7 +166,36 @@ pub fn generate_plan(scan: &ScanResult, options: &PlanOptions) -> Plan {
             }
 
             let mut proposal = if options.taxonomy_suggestions {
-                let cat = crate::taxonomy::suggest_category_config(file, &taxonomy_config);
+                let cat = if options.ollama {
+                    let sug = crate::ollama::get_advisor_suggestion(file);
+                    let matched_cat = taxonomy_config
+                        .categories
+                        .iter()
+                        .find(|c| c.id == sug.category_id);
+                    if let Some(c) = matched_cat {
+                        crate::taxonomy::TaxonomyCategory {
+                            id: c.id.clone(),
+                            label: c.label.clone(),
+                            relative_dir: std::path::PathBuf::from(&c.dir),
+                            confidence: sug.confidence,
+                            risk: if sug.confidence < 0.70 {
+                                "medium".to_string()
+                            } else {
+                                "low".to_string()
+                            },
+                            needs_review: sug.confidence < 0.70,
+                            reason: format!("{} | Sugerido por Ollama Advisor", sug.reason),
+                            rules_applied: vec!["ollama_advisor".to_string()],
+                            matched_keywords: vec![],
+                            candidate_categories: None,
+                            already_organized: false,
+                        }
+                    } else {
+                        crate::taxonomy::suggest_category_config(file, &taxonomy_config)
+                    }
+                } else {
+                    crate::taxonomy::suggest_category_config(file, &taxonomy_config)
+                };
                 PlanProposal {
                     action: "move".to_string(),
                     risk: cat.risk.clone(),

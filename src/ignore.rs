@@ -34,10 +34,29 @@ const SECRET_EXTENSIONS: &[&str] = &[".key", ".pem", ".secret", ".token"];
 
 /// Retorna true se o diretório deve ser ignorado pelo scanner.
 pub fn should_ignore_dir(path: &Path) -> bool {
+    should_ignore_dir_options(path, false)
+}
+
+pub fn should_ignore_dir_options(path: &Path, full_home: bool) -> bool {
     let name = match path.file_name().and_then(|n| n.to_str()) {
         Some(n) => n,
         None => return true,
     };
+
+    if full_home {
+        // No full_home, queremos inventariar diretórios ocultos importantes (.ssh, .config, .local),
+        // mas ainda ignorar diretórios de build/dependências gigantes e redundantes.
+        if name == "node_modules"
+            || name == "target"
+            || name == "result"
+            || name == ".direnv"
+            || name == ".git"
+            || name == ".cache"
+        {
+            return true;
+        }
+        return false;
+    }
 
     // Ignorar diretórios ocultos (começam com .)
     if name.starts_with('.') {
@@ -54,10 +73,19 @@ pub fn should_ignore_dir(path: &Path) -> bool {
 
 /// Retorna true se o arquivo deve ser ignorado pelo scanner.
 pub fn should_ignore_file(path: &Path) -> bool {
+    should_ignore_file_options(path, false)
+}
+
+pub fn should_ignore_file_options(path: &Path, full_home: bool) -> bool {
     let name = match path.file_name().and_then(|n| n.to_str()) {
         Some(n) => n,
         None => return true,
     };
+
+    if full_home {
+        // No full_home, queremos inventariar arquivos ocultos
+        return false;
+    }
 
     // Ignorar arquivos ocultos (começam com .)
     if name.starts_with('.') {

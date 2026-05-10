@@ -8,6 +8,7 @@ mod ignore;
 mod manifest;
 mod metadata;
 pub mod naming;
+pub mod ollama;
 mod planner;
 mod project;
 mod report;

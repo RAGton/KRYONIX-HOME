@@ -190,7 +190,12 @@ pub fn suggest_rename(file: &FileMetadata) -> Option<RenameSuggestion> {
         file.filename.clone()
     };
 
-    let (date_prefix, date_rule) = format_date_prefix(file.modified_at);
+    let parsed_modified_at = file
+        .modified_at
+        .as_deref()
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.with_timezone(&chrono::Utc));
+    let (date_prefix, date_rule) = format_date_prefix(parsed_modified_at);
     rules_applied.push(date_rule);
 
     let version = detect_version(&base_name);
@@ -273,8 +278,19 @@ mod tests {
             extension: ext.to_string(),
             mime: "application/octet-stream".to_string(),
             size_bytes: 100,
-            modified_at: Some(Utc.with_ymd_and_hms(2026, 5, 9, 12, 0, 0).unwrap()),
+            modified_at: Some("2026-05-09T12:00:00Z".to_string()),
+            is_dir: false,
+            is_file: true,
             is_symlink: false,
+            is_hidden: false,
+            is_project_member: false,
+            project_root: None,
+            source_zone: Some("unknown".to_string()),
+            readable: true,
+            content_sampled: false,
+            metadata_only: false,
+            protected_reason: None,
+            warnings: vec![],
             status: crate::metadata::FileStatus::Analyzed,
         }
     }
