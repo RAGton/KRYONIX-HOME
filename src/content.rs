@@ -176,3 +176,95 @@ pub fn analyze_file_content(path: &Path) -> Option<ContentProfile> {
     }
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs::{self, File};
+    use std::io::Write;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_confidentiality_protection() {
+        // Paths containing confidential patterns must be blocked and return None immediately
+        let blocked_paths = [
+            Path::new("/home/rocha/.ssh/id_rsa.pub"),
+            Path::new("/home/rocha/.gnupg/trustdb.gpg"),
+            Path::new("/etc/kryonix/brain.env"),
+            Path::new("/home/rocha/Documents/private_key.pem"),
+            Path::new("/home/rocha/.config/app/secrets.json"),
+        ];
+
+        for path in &blocked_paths {
+            assert!(
+                analyze_file_content(path).is_none(),
+                "Path {:?} should have been blocked for confidentiality",
+                path
+            );
+        }
+    }
+
+    #[test]
+    fn test_unsupported_extensions_return_none() {
+        let path = Path::new("unsupported_file.xyz");
+        assert!(analyze_file_content(path).is_none());
+    }
+
+    #[test]
+    fn test_analyze_text_file_success() {
+        let dir = tempdir().expect("Failed to create temp dir");
+        let file_path = dir.path().join("comprovante_pix_banco.txt");
+
+        let content = "Aqui está o comprovante de pagamento via pix enviado para o banco de teste.";
+        let mut file = File::create(&file_path).expect("Failed to create temp file");
+        file.write_all(content.as_bytes())
+            .expect("Failed to write to temp file");
+
+        let profile = analyze_file_content(&file_path)
+            .expect("Expected a valid ContentProfile for text file");
+
+        assert_eq!(profile.language.as_deref(), Some("Text"));
+        assert!(profile.keywords.contains(&"pix".to_string()));
+        assert!(profile.keywords.contains(&"comprovante".to_string()));
+        assert!(profile.keywords.contains(&"pagamento".to_string()));
+        assert!(profile.summary.is_some());
+        assert!(profile.summary.unwrap().contains("Aqui está o comprovante"));
+    }
+
+    #[test]
+    fn test_analyze_jupyter_notebook_success() {
+        let dir = tempdir().expect("Failed to create temp dir");
+        let file_path = dir.path().join("data_analysis.ipynb");
+
+        let json_content = serde_json::json!({
+            "cells": [
+                {
+                    "cell_type": "code",
+                    "execution_count": 1,
+                    "metadata": {},
+                    "outputs": [],
+                    "source": [
+                        "import pandas as pd\n",
+                        "import numpy as np\n",
+                        "import matplotlib.pyplot as plt\n"
+                    ]
+                }
+            ],
+            "metadata": {},
+            "nbformat": 4,
+            "nbformat_minor": 2
+        });
+
+        let mut file = File::create(&file_path).expect("Failed to create temp file");
+        file.write_all(json_content.to_string().as_bytes())
+            .expect("Failed to write to temp file");
+
+        let profile = analyze_file_content(&file_path)
+            .expect("Expected a valid ContentProfile for ipynb file");
+
+        assert_eq!(profile.language.as_deref(), Some("Python/Jupyter"));
+        assert!(profile.keywords.contains(&"pandas".to_string()));
+        assert!(profile.keywords.contains(&"numpy".to_string()));
+        assert!(profile.summary.is_some());
+    }
+}

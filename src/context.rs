@@ -50,3 +50,64 @@ pub fn analyze_file_context(path: &Path) -> ContextProfile {
         sibling_categories,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs::{self, File};
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_context_detects_sibling_nixos_category() {
+        let dir = tempdir().expect("Failed to create temp dir");
+        let flake_path = dir.path().join("flake.nix");
+        File::create(&flake_path).expect("Failed to create mock flake.nix");
+
+        let file_under_test = dir.path().join("study_notes.txt");
+
+        let context = analyze_file_context(&file_under_test);
+        assert!(
+            context
+                .sibling_categories
+                .contains(&"projetos.nixos".to_string()),
+            "Should have matched projetos.nixos due to sibling flake.nix"
+        );
+    }
+
+    #[test]
+    fn test_context_detects_sibling_rust_category() {
+        let dir = tempdir().expect("Failed to create temp dir");
+        let cargo_path = dir.path().join("Cargo.toml");
+        File::create(&cargo_path).expect("Failed to create mock Cargo.toml");
+
+        let file_under_test = dir.path().join("test_notes.md");
+
+        let context = analyze_file_context(&file_under_test);
+        assert!(
+            context
+                .sibling_categories
+                .contains(&"estudos.rust".to_string()),
+            "Should have matched estudos.rust due to sibling Cargo.toml"
+        );
+    }
+
+    #[test]
+    fn test_context_detects_ancestor_codebase() {
+        let dir = tempdir().expect("Failed to create temp dir");
+        // Create a subfolder representing nested project directories
+        let src_dir = dir.path().join("src").join("nested");
+        fs::create_dir_all(&src_dir).expect("Failed to create nested dirs");
+
+        // Create a project marker in the ancestor dir
+        let git_marker = dir.path().join(".git");
+        fs::create_dir(&git_marker).expect("Failed to create mock .git folder");
+
+        let file_under_test = src_dir.join("main.rs");
+
+        let context = analyze_file_context(&file_under_test);
+        assert!(
+            context.is_inside_codebase,
+            "Should have detected that file is inside a codebase due to ancestor .git marker"
+        );
+    }
+}
