@@ -61,7 +61,11 @@ enum Commands {
     /// Lista duplicatas exatas (SHA256 idêntico)
     Duplicates,
     /// Lista raízes de projetos detectadas (Git, Rust, Nix, etc.)
-    Projects,
+    Projects {
+        /// Emitir saída em formato JSON
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
     /// Lista todas as categorias de taxonomia atualmente configuradas
     Categories {
         /// Emitir saída em formato JSON
@@ -207,10 +211,14 @@ pub fn run() -> Result<()> {
             report::print_duplicates(&groups);
             eprintln!("\nNenhuma alteração foi feita.");
         }
-        Commands::Projects => {
+        Commands::Projects { json } => {
             let scan = scanner::load_latest_scan()?;
-            report::print_projects(&scan);
-            eprintln!("\nNenhuma alteração foi feita.");
+            if json {
+                println!("{}", serde_json::to_string_pretty(&scan.projects)?);
+            } else {
+                report::print_projects(&scan);
+                eprintln!("\nNenhuma alteração foi feita.");
+            }
         }
         Commands::Categories {
             json,
