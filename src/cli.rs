@@ -144,6 +144,24 @@ enum Commands {
     },
     /// Reverte o último apply executado
     Rollback,
+    /// Executa planejamento focado apenas em limpar ~/Downloads
+    Downloads {
+        /// Emitir saída em JSON ao invés de texto
+        #[arg(long)]
+        json: bool,
+
+        /// Caminho opcional para arquivo de taxonomia TOML
+        #[arg(long)]
+        taxonomy_config: Option<String>,
+
+        /// Limite de propostas exibidas no relatório
+        #[arg(long)]
+        limit: Option<usize>,
+
+        /// Exibir explicações detalhadas por proposta no relatório de texto
+        #[arg(long, default_value_t = false)]
+        why: bool,
+    },
     /// Exporta os eventos do Home Brain em formato JSONL
     #[command(name = "export-memory")]
     ExportMemory {
@@ -358,6 +376,60 @@ pub fn run() -> Result<()> {
         }
         Commands::Rollback => {
             rollback::run_rollback()?;
+        }
+        Commands::Downloads {
+            json,
+            taxonomy_config,
+            limit,
+            why,
+        } => {
+            let mut scan = scanner::load_latest_scan()?;
+            let home_path = Path::new(&scan.home_dir);
+            let downloads_path = home_path.join("Downloads");
+
+            scan.files.retain(|f| {
+                let p = Path::new(&f.path);
+                p.starts_with(&downloads_path) || f.path.to_lowercase().contains("/downloads/")
+            });
+            scan.projects.retain(|p| {
+                let path = Path::new(&p.root_path);
+                path.starts_with(&downloads_path)
+                    || p.root_path.to_lowercase().contains("/downloads/")
+            });
+
+            let options = planner::PlanOptions {
+                rename_suggestions: true,
+                taxonomy_suggestions: true,
+                taxonomy_config_path: taxonomy_config.as_deref(),
+                include_large_files: true,
+                safe_only: false,
+                review_only: false,
+                projects_only: false,
+                limit,
+            };
+            let plan = planner::generate_plan(&scan, &options);
+
+            if json {
+                println!("{}", serde_json::to_string_pretty(&plan)?);
+            } else {
+                report::print_plan(&plan);
+                if why {
+                    println!("\n=== Detalhamento Explicativo das Propostas (Downloads) ===");
+                    for prop in &plan.proposals {
+                        println!("\nArquivo: {}", prop.old_path);
+                        println!("  Ação:   {} -> {}", prop.action, prop.new_dir);
+                        if let Some(ref nf) = prop.new_filename {
+                            println!("  Nome:   {}", nf);
+                        }
+                        println!("  Motivo: {}", prop.reason);
+                        println!(
+                            "  Risco:  {} | Confiança: {:.2} | Revisão: {}",
+                            prop.risk, prop.confidence, prop.needs_review
+                        );
+                    }
+                }
+                eprintln!("\nNenhuma alteração foi feita. Use 'manifest create' ou 'manifest' para registrar.");
+            }
         }
         Commands::ExportMemory {
             dry_run,

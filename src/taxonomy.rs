@@ -218,7 +218,7 @@ risk = "low"
 [[category]]
 id = "projetos.kryonix"
 label = "Kryonix"
-dir = "Documentos/Projetos/Kryonix"
+dir = "Projetos/Kryonix"
 keywords = ["kryonix", "brain", "lightrag", "graphrag", "vault"]
 extensions = ["md", "nix", "json"]
 risk = "low"
@@ -285,44 +285,53 @@ risk = "low"
 [[category]]
 id = "projetos.kryonix"
 label = "Ecosistema Kryonix"
-dir = "Documentos/Projetos/Kryonix"
+dir = "Projetos/Kryonix"
 keywords = ["kryonix", "caelestia", "glacier", "inspiron", "ragos"]
 
 [[category]]
 id = "projetos.ragos"
 label = "RAGOS Framework"
-dir = "Documentos/Projetos/RAGOS"
+dir = "Projetos/RAGOS"
 keywords = ["ragos", "rag-os"]
 
 [[category]]
 id = "projetos.nixos"
 label = "NixOS & Flakes"
-dir = "Documentos/Projetos/NixOS"
+dir = "Projetos/NixOS"
 keywords = ["nixos", "flake", "home-manager"]
 
 [[category]]
 id = "projetos.ia"
 label = "IA & Machine Learning"
-dir = "Documentos/Projetos/IA"
+dir = "Projetos/IA"
 keywords = ["ai", "llm", "training", "datasets"]
 
 [[category]]
 id = "projetos.infra"
 label = "Infraestrutura & Lab"
-dir = "Documentos/Projetos/Infra"
+dir = "Projetos/Infra"
 keywords = ["proxmox", "server", "network", "opnsense"]
 
 [[category]]
 id = "projetos.windows"
 label = "Windows & Legacy"
-dir = "Documentos/Projetos/Windows"
+dir = "Projetos/Windows"
 keywords = ["windows", "ativador", "office"]
 
 [[category]]
 id = "projetos.sandbox"
 label = "Projetos Sandbox"
-dir = "Documentos/Projetos/Sandbox"
+dir = "Projetos/Sandbox"
 keywords = []
+
+# Conhecimento (Obsidian Vault)
+[[category]]
+id = "conhecimento.vault"
+label = "Obsidian Knowledge Vault"
+dir = "Documentos/Conhecimento/Obsidian"
+keywords = ["vault", "obsidian", "knowledge", "brain", "zettelkasten"]
+extensions = ["md", "canvas"]
+risk = "high"
 "#;
 
 pub fn parse_taxonomy_toml(content: &str) -> TaxonomyConfig {
@@ -446,6 +455,14 @@ pub fn suggest_category_config(file: &FileMetadata, config: &TaxonomyConfig) -> 
     let is_audio = file.mime.starts_with("audio/")
         || matches!(ext_lower.as_str(), "mp3" | "flac" | "ogg" | "wav");
 
+    let path = std::path::Path::new(&file.path);
+
+    // 1. Coleta de Content-Aware metadata se aplicável
+    let content_profile = crate::content::analyze_file_content(path);
+
+    // 2. Coleta de Context-Aware metadata
+    let context_profile = crate::context::analyze_file_context(path);
+
     let mut best_score = 0.0_f32;
     let mut best_candidates: Vec<&CategoryConfig> = Vec::new();
     let mut best_matches = Vec::new();
@@ -477,11 +494,29 @@ pub fn suggest_category_config(file: &FileMetadata, config: &TaxonomyConfig) -> 
         let mut score = 0.0_f32;
         let mut matched = Vec::new();
 
+        // Match por nome (basename)
         for kw in &def.keywords {
             if basename_lower.contains(&kw.to_lowercase()) {
                 score += 0.50;
                 matched.push(kw.clone());
             }
+        }
+
+        // Match por conteúdo se aplicável (Content-Aware)
+        if let Some(ref cp) = content_profile {
+            for kw in &def.keywords {
+                let kw_lower = kw.to_lowercase();
+                if cp.keywords.contains(&kw_lower) {
+                    score += 0.25;
+                    matched.push(format!("conteúdo:{}", kw));
+                }
+            }
+        }
+
+        // Match por contexto de diretório (Context-Aware)
+        if context_profile.sibling_categories.contains(&def.id) {
+            score += 0.30;
+            matched.push("contexto_diretorio".to_string());
         }
 
         // Penalidade por media vs doc
@@ -539,19 +574,37 @@ pub fn suggest_category_config(file: &FileMetadata, config: &TaxonomyConfig) -> 
                     || is_audio
                     || ext_lower.is_empty();
 
-            let needs_review = if is_restricted_format {
+            let is_inside_codebase = context_profile.is_inside_codebase;
+
+            let needs_review = if is_restricted_format || is_inside_codebase {
                 true
             } else {
                 best_score < 0.75
             };
 
-            let risk = if ext_lower.is_empty() {
+            let risk = if ext_lower.is_empty() || is_inside_codebase {
                 "high".to_string()
             } else if needs_review {
                 "medium".to_string()
             } else {
                 "low".to_string()
             };
+
+            let mut reason = format!(
+                "Classificado por palavras-chave: {}",
+                best_matches.join(", ")
+            );
+            if is_inside_codebase {
+                reason = format!(
+                    "{} | Localizado dentro de Codebase (Segurança Máxima)",
+                    reason
+                );
+            }
+            if let Some(ref cp) = content_profile {
+                if let Some(ref sum) = cp.summary {
+                    reason = format!("{} | Resumo: {}", reason, sum);
+                }
+            }
 
             return TaxonomyCategory {
                 id: def.id.clone(),
@@ -560,10 +613,7 @@ pub fn suggest_category_config(file: &FileMetadata, config: &TaxonomyConfig) -> 
                 confidence: best_score.clamp(0.0, 1.0),
                 risk,
                 needs_review,
-                reason: format!(
-                    "Classificado por palavras-chave: {}",
-                    best_matches.join(", ")
-                ),
+                reason,
                 rules_applied: vec!["taxonomy_keyword_match".to_string()],
                 matched_keywords: best_matches,
                 candidate_categories: None,
@@ -591,7 +641,13 @@ pub fn suggest_category_config(file: &FileMetadata, config: &TaxonomyConfig) -> 
     }
 
     // Sem categoria correspondente -> Fallback total baseado no tipo de arquivo
-    let (fallback_dir, fallback_label) = if is_image {
+    let is_in_downloads = file.path.to_lowercase().contains("/downloads/");
+    let (fallback_dir, fallback_label) = if is_in_downloads {
+        (
+            "Documentos/00_Inbox/Downloads/Revisar",
+            "Downloads / Transient Review",
+        )
+    } else if is_image {
         ("Imagens/Revisar", "Revisão de Imagens")
     } else if is_video {
         ("Vídeos/Revisar", "Revisão de Vídeos")
@@ -601,7 +657,7 @@ pub fn suggest_category_config(file: &FileMetadata, config: &TaxonomyConfig) -> 
         ("Documentos/00_Inbox/Revisar", "Inbox / Revisão Geral")
     };
 
-    let risk = if ext_lower.is_empty() {
+    let risk = if ext_lower.is_empty() || context_profile.is_inside_codebase {
         "high"
     } else {
         "medium"
@@ -689,13 +745,24 @@ mod tests {
         let cat = suggest_category(&file);
         assert_eq!(
             cat.relative_dir.to_str().unwrap(),
-            "Documentos/00_Inbox/Revisar"
+            "Documentos/Conhecimento/Obsidian"
         );
     }
 
     #[test]
     fn test_fallback_revisar() {
         let file = dummy_file("coisa aleatoria.txt", "txt", "text/plain");
+        let cat = suggest_category(&file);
+        assert_eq!(
+            cat.relative_dir.to_str().unwrap(),
+            "Documentos/00_Inbox/Downloads/Revisar"
+        );
+    }
+
+    #[test]
+    fn test_fallback_revisar_generic() {
+        let mut file = dummy_file("coisa aleatoria.txt", "txt", "text/plain");
+        file.path = "/tmp/home/Documents/coisa aleatoria.txt".to_string();
         let cat = suggest_category(&file);
         assert_eq!(
             cat.relative_dir.to_str().unwrap(),

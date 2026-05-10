@@ -1,5 +1,7 @@
 mod apply;
 mod cli;
+pub mod content;
+pub mod context;
 mod export;
 mod hashing;
 mod ignore;

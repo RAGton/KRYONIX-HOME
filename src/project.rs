@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-/// Marcadores que indicam a raiz de um projeto de software.
+/// Marcadores que indicam a raiz de um projeto de software ou vault de conhecimento.
 pub const PROJECT_MARKERS: &[&str] = &[
     ".git",
     "flake.nix",
@@ -14,6 +14,7 @@ pub const PROJECT_MARKERS: &[&str] = &[
     "deno.json",
     "pnpm-lock.yaml",
     "yarn.lock",
+    ".obsidian",
 ];
 
 /// Diretórios internos de projeto que devem ser ignorados.
@@ -28,6 +29,7 @@ pub const PROJECT_IGNORED_DIRS: &[&str] = &[
     ".git",
     "vendor",
     "result",
+    ".obsidian",
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,6 +43,7 @@ pub struct ProjectCandidate {
     pub risk: String,
     pub needs_review: bool,
     pub reason: String,
+    pub warnings: Vec<String>,
 }
 
 /// Detecta se um diretório é a raiz de um projeto.
@@ -62,6 +65,17 @@ pub fn detect_project_root(path: &Path) -> Option<Vec<String>> {
 /// Classifica um projeto baseado no nome e marcadores.
 pub fn classify_project(name: &str, markers: &[String]) -> (String, String) {
     let name_lower = name.to_lowercase();
+
+    // Regras de Obsidian Knowledge Vault (Prioridade absoluta)
+    if markers.contains(&".obsidian".to_string())
+        || name_lower.contains("obsidian")
+        || name_lower.contains("vault")
+    {
+        return (
+            "conhecimento.vault".to_string(),
+            "Obsidian Knowledge Vault detectado".to_string(),
+        );
+    }
 
     // Regras de Kryonix
     if name_lower.contains("kryonix")
@@ -138,7 +152,7 @@ pub fn classify_project(name: &str, markers: &[String]) -> (String, String) {
 
 /// Calcula o risco de um projeto.
 pub fn calculate_project_risk(markers: &[String]) -> (String, bool) {
-    if markers.iter().any(|m| m == ".git") {
+    if markers.iter().any(|m| m == ".obsidian" || m == ".git") {
         ("high".to_string(), true)
     } else {
         ("medium".to_string(), false)

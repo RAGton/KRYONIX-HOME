@@ -118,8 +118,13 @@ pub fn generate_plan(scan: &ScanResult, options: &PlanOptions) -> Plan {
             proposal.category_dir = Some(proposal.new_dir.clone());
         } else {
             // Fallback se não estiver no TOML (ex: sandbox)
-            proposal.new_dir = "Projetos/Sandbox".to_string();
-            proposal.category_label = Some("Sandbox".to_string());
+            if project.root_path.to_lowercase().contains("/downloads/") {
+                proposal.new_dir = "Documentos/00_Inbox/Downloads/Revisar".to_string();
+                proposal.category_label = Some("Downloads / Transient Review".to_string());
+            } else {
+                proposal.new_dir = "Projetos/Sandbox".to_string();
+                proposal.category_label = Some("Sandbox".to_string());
+            }
         }
 
         // Verifica se já está organizado

@@ -37,6 +37,7 @@ pub struct ScanResult {
     pub files_ignored: usize,
     pub files_error: usize,
     pub total_size_bytes: u64,
+    pub warnings: Vec<String>,
 }
 
 /// Retorna o diretório de estado do Kryonix Home Brain.
@@ -72,6 +73,7 @@ pub fn run_scan() -> Result<ScanResult> {
     let mut files: Vec<FileMetadata> = Vec::new();
     let mut projects: Vec<crate::project::ProjectCandidate> = Vec::new();
     let mut dirs_scanned: Vec<String> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
 
     for dir_name in SCAN_DIRS {
         let scan_path = home.join(dir_name);
@@ -80,7 +82,7 @@ pub fn run_scan() -> Result<ScanResult> {
         }
         dirs_scanned.push(dir_name.to_string());
 
-        walk_directory(&scan_path, &mut files, &mut projects);
+        walk_directory(&scan_path, &mut files, &mut projects, &mut warnings);
     }
 
     let files_analyzed = files
@@ -116,6 +118,7 @@ pub fn run_scan() -> Result<ScanResult> {
         files_ignored,
         files_error,
         total_size_bytes,
+        warnings,
     })
 }
 
@@ -124,6 +127,7 @@ fn walk_directory(
     root: &Path,
     files: &mut Vec<FileMetadata>,
     projects: &mut Vec<crate::project::ProjectCandidate>,
+    warnings: &mut Vec<String>,
 ) {
     let walker = WalkDir::new(root)
         .follow_links(false)
@@ -141,7 +145,18 @@ fn walk_directory(
     while let Some(entry) = it.next() {
         let entry = match entry {
             Ok(e) => e,
-            Err(_) => continue,
+            Err(err) => {
+                let err_str = err.to_string();
+                if err_str.to_lowercase().contains("permission denied") {
+                    warnings.push(format!(
+                        "Permissão negada ao acessar path: {:?}",
+                        err.path()
+                    ));
+                } else {
+                    warnings.push(format!("Erro de leitura no path: {}", err_str));
+                }
+                continue;
+            }
         };
 
         let path = entry.path();
@@ -151,7 +166,31 @@ fn walk_directory(
             if let Some(markers) = crate::project::detect_project_root(path) {
                 let name = path.file_name().unwrap().to_string_lossy().to_string();
                 let (category_id, reason) = crate::project::classify_project(&name, &markers);
-                let (risk, needs_review) = crate::project::calculate_project_risk(&markers);
+                let (mut risk, mut needs_review) = crate::project::calculate_project_risk(&markers);
+
+                let mut project_warnings = Vec::new();
+
+                let path_lower = path.to_string_lossy().to_lowercase();
+                let is_non_ideal = path_lower.contains("/downloads/")
+                    || path_lower.contains("/music/")
+                    || path_lower.contains("/músicas/")
+                    || path_lower.contains("/pictures/")
+                    || path_lower.contains("/imagens/")
+                    || path_lower.contains("/videos/")
+                    || path_lower.contains("/vídeos/")
+                    || path_lower.contains("/área de trabalho/")
+                    || path_lower.contains("/desktop/");
+
+                if is_non_ideal {
+                    project_warnings.push("Projeto detectado em diretório não ideal".to_string());
+                    needs_review = true;
+                    if risk == "low" {
+                        risk = "medium".to_string();
+                    }
+                    if markers.iter().any(|m| m == ".git") {
+                        risk = "high".to_string();
+                    }
+                }
 
                 // Calcular estatísticas do projeto de forma recursiva (incluindo ignorados como target)
                 let (size, count) = calculate_dir_stats(path);
@@ -166,6 +205,7 @@ fn walk_directory(
                     risk,
                     needs_review,
                     reason,
+                    warnings: project_warnings,
                 });
 
                 // Pular subdiretório do projeto no scanner normal para evitar duplicidade de arquivos
@@ -224,9 +264,6 @@ fn calculate_dir_stats(path: &Path) -> (u64, usize) {
                 Err(_) => continue,
             };
 
-            // Ignorar diretórios internos de build no cálculo de estatísticas para não inflar absurdamente?
-            // O prompt diz: "Diretórios com build/cache/vendor devem ser ignorados internamente."
-            // Vou checar se o caminho contém algum desses marcadores ignorados.
             let path_str = entry.path().to_string_lossy();
             let should_skip = crate::project::PROJECT_IGNORED_DIRS.iter().any(|d| {
                 let pattern = format!("/{}/", d);
@@ -263,7 +300,7 @@ pub fn save_scan(scan: &ScanResult) -> Result<()> {
     Ok(())
 }
 
-/// Carrega o último scan salvo.
+/// Carrega o último scan saved.
 pub fn load_latest_scan() -> Result<ScanResult> {
     let state = state_dir()?;
     let path = state.join("latest-scan.json");
