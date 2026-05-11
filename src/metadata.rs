@@ -99,53 +99,67 @@ pub fn detect_source_zone(path: &Path, home: &Path) -> String {
 /// Identifica se o caminho é protegido e por qual motivo.
 pub fn is_protected_path(path: &Path) -> Option<String> {
     let path_str = path.to_string_lossy().to_lowercase();
-    if path_str.contains("/.ssh/") || path_str.ends_with("/.ssh") {
-        return Some("sensitive .ssh directory".to_string());
+
+    // 1. Checagem por componentes de diretório sensíveis
+    for component in path.components() {
+        if let std::path::Component::Normal(name) = component {
+            let name_str = name.to_string_lossy().to_lowercase();
+            match name_str.as_str() {
+                ".ssh" => return Some("sensitive .ssh directory".to_string()),
+                ".gnupg" => return Some("sensitive .gnupg directory".to_string()),
+                ".config" => return Some("system/app config directory".to_string()),
+                ".local" => return Some("local application state directory".to_string()),
+                ".cache" => return Some("cached files".to_string()),
+                ".mozilla" | ".thunderbird" => return Some("browser profile files".to_string()),
+                ".var" => return Some("flatpak and runtime state".to_string()),
+                ".npm" | ".cargo" | ".rustup" | ".node-gyp" | ".electron" => {
+                    return Some("toolchain/package manager files".to_string())
+                }
+                ".gnome" | ".kde" | ".dbus" | ".pki" | ".password-store" => {
+                    return Some("desktop/security secrets".to_string())
+                }
+                _ => {}
+            }
+        }
     }
-    if path_str.contains("/.gnupg/") || path_str.ends_with("/.gnupg") {
-        return Some("sensitive .gnupg directory".to_string());
-    }
-    if path_str.contains("/.config/") || path_str.ends_with("/.config") {
-        return Some("system/app config directory".to_string());
-    }
-    if path_str.contains("/.local/") || path_str.ends_with("/.local") {
-        return Some("local application state directory".to_string());
-    }
-    if path_str.contains("/.cache/") || path_str.ends_with("/.cache") {
-        return Some("cached files".to_string());
-    }
-    if path_str.contains("/.mozilla/") || path_str.ends_with("/.mozilla") {
-        return Some("browser files".to_string());
-    }
-    if path_str.contains("/.var/") || path_str.ends_with("/.var") {
-        return Some("flatpak and runtime state".to_string());
-    }
-    if path_str.contains("/.npm/") || path_str.ends_with("/.npm") {
-        return Some("node package cache".to_string());
-    }
-    if path_str.contains("/.cargo/") || path_str.ends_with("/.cargo") {
-        return Some("cargo registry/cache".to_string());
-    }
-    if path_str.contains("/.rustup/") || path_str.ends_with("/.rustup") {
-        return Some("rustup toolchains".to_string());
-    }
-    if path_str.contains("/.env") || path_str.ends_with(".env") {
+
+    // 2. Checagem por nomes de arquivos e padrões
+    let filename = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    if filename == ".env"
+        || filename.ends_with(".env")
+        || filename == "brain.env"
+        || filename == "neo4j.env"
+    {
         return Some("environment variable secrets file".to_string());
     }
-    if path_str.contains("/brain.env") || path_str.ends_with("brain.env") {
-        return Some("kryonix API credentials".to_string());
-    }
-    if path_str.contains("/neo4j.env") || path_str.ends_with("neo4j.env") {
-        return Some("neo4j database credentials".to_string());
-    }
-    if path_str.contains("private_key")
-        || path_str.contains("id_rsa")
-        || path_str.contains("id_ed25519")
-        || path_str.ends_with(".pem")
-        || path_str.ends_with(".key")
+
+    if filename.contains("private_key")
+        || filename.contains("id_rsa")
+        || filename.contains("id_ed25519")
+        || filename.contains("id_ecdsa")
+        || filename.ends_with(".pem")
+        || filename.ends_with(".key")
+        || filename.ends_with(".secret")
+        || filename.ends_with(".token")
     {
-        return Some("cryptographic private key".to_string());
+        return Some("cryptographic private key or secret token".to_string());
     }
+
+    // 3. Bloqueio extra por substring no path completo (backup safety)
+    if path_str.contains("/.ssh")
+        || path_str.contains("/.gnupg")
+        || path_str.contains("/.config")
+        || path_str.contains("/.local/share/kryonix")
+        || path_str.contains("/.local/state/kryonix")
+    {
+        return Some("protected system or hidden path".to_string());
+    }
+
     None
 }
 
@@ -231,7 +245,7 @@ pub fn collect(path: &Path, content_aware: bool) -> FileMetadata {
         None
     };
 
-    let context_profile = if content_aware && !is_dir {
+    let context_profile = if content_aware && !is_dir && !metadata_only {
         Some(crate::context::analyze_file_context(path))
     } else {
         None

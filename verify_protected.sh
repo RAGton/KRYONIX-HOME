@@ -18,11 +18,11 @@ printf "GPG_SECRET_TESTE_NAO_PODE_VAZAR" > "$tmp/.gnupg/private.key"
 printf "arquivo fora da lista antiga" > "$tmp/PastaForaDaListaAntiga/nota.txt"
 
 echo "--- Running Scan ---"
-HOME="$tmp" nix run .#kryonix-home --override-input kryonix-home path:./packages/kryonix-home -- scan --full-home
+HOME="$tmp" nix run .#kryonix-home -- scan --full-home
 
 echo "--- Running Plan ---"
-HOME="$tmp" nix run .#kryonix-home --override-input kryonix-home path:./packages/kryonix-home -- plan --content-aware --context-aware --summary
-HOME="$tmp" nix run .#kryonix-home --override-input kryonix-home path:./packages/kryonix-home -- plan --content-aware --context-aware --json > /tmp/plan.json
+HOME="$tmp" nix run .#kryonix-home -- plan --content-aware --context-aware --summary
+HOME="$tmp" nix run .#kryonix-home -- plan --content-aware --context-aware --json > /tmp/plan.json
 
 echo "--- Verifying results ---"
 

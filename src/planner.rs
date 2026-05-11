@@ -347,6 +347,22 @@ pub fn generate_plan(scan: &ScanResult, options: &PlanOptions) -> Plan {
 
 /// Classifica um arquivo por MIME/extensão e sugere destino.
 fn classify_file(file: &FileMetadata) -> Option<PlanProposal> {
+    // SEGURANÇA MÁXIMA: Se for caminho protegido, NUNCA sugerir ação de movimentação.
+    if file.metadata_only || file.protected_reason.is_some() {
+        return None;
+    }
+
+    // Redundância defensiva: checar o path novamente com a lógica canônica
+    if let Some(_reason) = crate::metadata::is_protected_path(std::path::Path::new(&file.path)) {
+        return None;
+    }
+
+    // Bloqueio de arquivos ocultos por padrão na Home (pontos)
+    // Exceto se for explicitamente parte de um vault Obsidian ou outro local permitido
+    if file.is_hidden && !file.path.to_lowercase().contains("/.obsidian/") {
+        return None;
+    }
+
     let mime = file.mime.as_str();
     let ext = file.extension.as_str();
 
@@ -465,80 +481,92 @@ mod tests {
     use super::*;
     use crate::metadata::FileStatus;
 
+    fn create_mock_file(path: &str, protected: bool) -> FileMetadata {
+        FileMetadata {
+            path: path.to_string(),
+            filename: Path::new(path)
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .to_string(),
+            extension: Path::new(path)
+                .extension()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string(),
+            mime: if protected {
+                "application/octet-stream"
+            } else {
+                "application/pdf"
+            }
+            .to_string(),
+            size_bytes: 1024,
+            modified_at: None,
+            is_dir: false,
+            is_file: true,
+            is_symlink: false,
+            is_hidden: path.contains("/."),
+            is_project_member: false,
+            project_root: None,
+            source_zone: None,
+            readable: !protected,
+            content_sampled: false,
+            metadata_only: protected,
+            protected_reason: if protected {
+                Some("protected".to_string())
+            } else {
+                None
+            },
+            warnings: vec![],
+            content: None,
+            context: None,
+            status: FileStatus::Analyzed,
+        }
+    }
+
     #[test]
-    fn test_planner_skips_protected_files() {
+    fn test_planner_absolute_protection_enforcement() {
         let mut files = Vec::new();
-        // Arquivo protegido
-        files.push(FileMetadata {
-            path: "/home/user/.ssh/id_rsa".to_string(),
-            filename: "id_rsa".to_string(),
-            extension: String::new(),
-            mime: "application/octet-stream".to_string(),
-            size_bytes: 1024,
-            modified_at: None,
-            is_dir: false,
-            is_file: true,
-            is_symlink: false,
-            is_hidden: true,
-            is_project_member: false,
-            project_root: None,
-            source_zone: None,
-            readable: false,
-            content_sampled: false,
-            metadata_only: true,
-            protected_reason: Some("sensitive .ssh directory".to_string()),
-            warnings: vec![],
-            content: None,
-            context: None,
-            status: FileStatus::Analyzed,
-        });
-        // Arquivo normal
-        files.push(FileMetadata {
-            path: "/home/user/Downloads/test.pdf".to_string(),
-            filename: "test.pdf".to_string(),
-            extension: "pdf".to_string(),
-            mime: "application/pdf".to_string(),
-            size_bytes: 1024,
-            modified_at: None,
-            is_dir: false,
-            is_file: true,
-            is_symlink: false,
-            is_hidden: false,
-            is_project_member: false,
-            project_root: None,
-            source_zone: None,
-            readable: true,
-            content_sampled: false,
-            metadata_only: false,
-            protected_reason: None,
-            warnings: vec![],
-            content: None,
-            context: None,
-            status: FileStatus::Analyzed,
-        });
+        files.push(create_mock_file("/home/user/.ssh/id_rsa", true));
+        files.push(create_mock_file("/home/user/.gnupg/secring.gpg", true));
+        files.push(create_mock_file("/home/user/.config/app/secrets.env", true));
+        files.push(create_mock_file("/home/user/Downloads/public.pdf", false));
 
         let scan = ScanResult {
             run_id: "test".to_string(),
             timestamp: Utc::now(),
             home_dir: "/home/user".to_string(),
-            dirs_scanned: vec!["~".to_string()],
+            dirs_scanned: vec!["/home/user".to_string()],
             files,
             projects: vec![],
-            files_analyzed: 2,
+            files_analyzed: 4,
             files_ignored: 0,
             files_error: 0,
-            total_size_bytes: 2048,
+            total_size_bytes: 4096,
             warnings: vec![],
             full_home: true,
         };
 
-        let options = PlanOptions::default();
+        let options = PlanOptions {
+            full_home: true,
+            ..Default::default()
+        };
         let plan = generate_plan(&scan, &options);
 
-        // id_rsa não deve estar em propostas, mas sim em protected_files
+        // Somente o PDF deve gerar proposta
         assert_eq!(plan.proposals.len(), 1);
-        assert_eq!(plan.proposals[0].old_path, "/home/user/Downloads/test.pdf");
-        assert_eq!(plan.protected_files.len(), 1);
-        assert_eq!(plan.protected_files[0].path, "/home/user/.ssh/id_rsa");
+        assert_eq!(
+            plan.proposals[0].old_path,
+            "/home/user/Downloads/public.pdf"
+        );
+
+        // 3 arquivos devem estar na lista de protegidos
+        assert_eq!(plan.protected_files.len(), 3);
+
+        // Verificar se todos os protegidos foram capturados
+        let protected_paths: Vec<_> = plan.protected_files.iter().map(|f| &f.path).collect();
+        assert!(protected_paths.contains(&&"/home/user/.ssh/id_rsa".to_string()));
+        assert!(protected_paths.contains(&&"/home/user/.gnupg/secring.gpg".to_string()));
+        assert!(protected_paths.contains(&&"/home/user/.config/app/secrets.env".to_string()));
     }
 }
