@@ -12,6 +12,7 @@ pub mod ollama;
 mod planner;
 mod project;
 mod report;
+mod review;
 mod rollback;
 mod scanner;
 pub mod taxonomy;

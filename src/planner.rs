@@ -14,7 +14,9 @@ pub struct PlanProposal {
     pub old_path: String,
     pub new_dir: String,
     pub reason: String,
+    pub evidence: String,
     pub needs_review: bool,
+    pub protected: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub new_filename: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -128,7 +130,9 @@ pub fn generate_plan(scan: &ScanResult, options: &PlanOptions) -> Plan {
             old_path: project.root_path.clone(),
             new_dir: String::new(), // Será preenchido abaixo
             reason: project.reason.clone(),
-            needs_review: project.needs_review,
+            evidence: format!("Marcadores detectados: {}", project.markers.join(", ")),
+            needs_review: project.needs_review || project.root_path.contains("Obsidian Vault"),
+            protected: false,
             new_filename: None,
             rules_applied: Some(project.markers.clone()),
             naming_profile: None,
@@ -189,19 +193,14 @@ pub fn generate_plan(scan: &ScanResult, options: &PlanOptions) -> Plan {
                 continue;
             }
 
-            // SEGURANÇA: Arquivos protegidos ou metadata-only NUNCA devem gerar propostas de ação
-            if file.metadata_only || file.protected_reason.is_some() {
-                protected_files.push(file.clone());
-                continue;
-            }
-
-            // O scanner já deve ter filtrado arquivos dentro de projetos se it.skip_current_dir() funcionou.
-            // Mas por segurança, se o arquivo estiver em um caminho de projeto já registrado, pulamos.
-            if scan
-                .projects
-                .iter()
-                .any(|p| file.path.starts_with(&p.root_path))
-            {
+            // REGRA 7 & 8: Arquivos protegidos ou dentro de projetos Git NUNCA devem gerar propostas de ação
+            if file.metadata_only || file.protected_reason.is_some() || file.is_project_member {
+                // Mascarar path para o relatório se for protegido
+                let mut masked_file = file.clone();
+                if let Some(ref reason) = file.protected_reason {
+                    masked_file.path = mask_protected_path(&file.path, reason);
+                }
+                protected_files.push(masked_file);
                 continue;
             }
 
@@ -248,7 +247,9 @@ pub fn generate_plan(scan: &ScanResult, options: &PlanOptions) -> Plan {
                     old_path: file.path.clone(),
                     new_dir: cat.relative_dir.to_string_lossy().to_string(),
                     reason: cat.reason.clone(),
-                    needs_review: cat.needs_review,
+                    evidence: format!("Extensão: {} | MIME: {}", file.extension, file.mime),
+                    needs_review: cat.needs_review || file.path.contains("Obsidian Vault"),
+                    protected: false,
                     new_filename: None,
                     rules_applied: Some(cat.rules_applied.clone()),
                     naming_profile: None,
@@ -456,7 +457,9 @@ fn classify_file(file: &FileMetadata) -> Option<PlanProposal> {
         old_path: file.path.clone(),
         new_dir: new_dir.to_string(),
         reason: reason.to_string(),
-        needs_review: confidence < 0.70,
+        evidence: format!("Extensão: {} | MIME: {}", file.extension, file.mime),
+        needs_review: confidence < 0.70 || file.path.contains("Obsidian Vault"),
+        protected: false,
         new_filename: None,
         rules_applied: None,
         naming_profile: None,
@@ -474,6 +477,21 @@ fn classify_file(file: &FileMetadata) -> Option<PlanProposal> {
         project_file_count: None,
         project_total_size: None,
     })
+}
+
+/// Mascara paths protegidos para relatórios
+fn mask_protected_path(path: &str, reason: &str) -> String {
+    let p = Path::new(path);
+    // Tenta achar o diretório raiz sensível (.ssh, .gnupg, etc)
+    for component in p.components() {
+        if let std::path::Component::Normal(name) = component {
+            let n = name.to_string_lossy().to_lowercase();
+            if n == ".ssh" || n == ".gnupg" || n == ".config" || n == ".local" || n == ".cache" {
+                return format!("~/{}/[PROTECTED: {}]", n, reason);
+            }
+        }
+    }
+    format!("[PROTECTED: {}]", reason)
 }
 
 #[cfg(test)]
@@ -563,10 +581,10 @@ mod tests {
         // 3 arquivos devem estar na lista de protegidos
         assert_eq!(plan.protected_files.len(), 3);
 
-        // Verificar se todos os protegidos foram capturados
+        // Verificar se todos os protegidos foram capturados e mascarados
         let protected_paths: Vec<_> = plan.protected_files.iter().map(|f| &f.path).collect();
-        assert!(protected_paths.contains(&&"/home/user/.ssh/id_rsa".to_string()));
-        assert!(protected_paths.contains(&&"/home/user/.gnupg/secring.gpg".to_string()));
-        assert!(protected_paths.contains(&&"/home/user/.config/app/secrets.env".to_string()));
+        assert!(protected_paths.contains(&&"~/.ssh/[PROTECTED: protected]".to_string()));
+        assert!(protected_paths.contains(&&"~/.gnupg/[PROTECTED: protected]".to_string()));
+        assert!(protected_paths.contains(&&"~/.config/[PROTECTED: protected]".to_string()));
     }
 }

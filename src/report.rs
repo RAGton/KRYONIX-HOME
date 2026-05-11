@@ -191,7 +191,6 @@ pub fn print_projects(scan: &ScanResult) {
     }
 }
 
-/// Imprime dashboard do plano.
 pub fn print_plan_dashboard(plan: &Plan) {
     let mut safe_count = 0;
     let mut review_count = 0;
@@ -235,7 +234,7 @@ pub fn print_plan_dashboard(plan: &Plan) {
     };
 
     println!("\x1b[1m╭────────────────────────────────────────────────────────────╮\x1b[0m");
-    println!("\x1b[1m│ 🧊 Kryonix Home Plan                                       │\x1b[0m");
+    println!("\x1b[1m│ 🧊 Kryonix Home Plan Dashboard                             │\x1b[0m");
     println!("\x1b[1m├────────────────────────────────────────────────────────────┤\x1b[0m");
     println!("│ Home: {:<52} │", plan.home_dir);
     println!("│ Modo: {:<52} │", modes_str);
@@ -252,8 +251,7 @@ pub fn print_plan_dashboard(plan: &Plan) {
     println!("│ Itens protegidos: {:<40} │", plan.protected_files.len());
     println!("\x1b[1m╰────────────────────────────────────────────────────────────╯\x1b[0m");
 
-    println!();
-    println!("\x1b[1mResumo de Ações:\x1b[0m");
+    println!("\n\x1b[1mResumo de Ações:\x1b[0m");
     println!("  \x1b[32m✅ Ações Seguras:\x1b[0m      {}", safe_count);
     println!("  \x1b[33m⚠️ Precisam de Revisão:\x1b[0m {}", review_count);
     println!("  \x1b[31m❌ Conflitos/Risco:\x1b[0m    {}", conflict_count);
@@ -261,6 +259,10 @@ pub fn print_plan_dashboard(plan: &Plan) {
     println!("  Projetos a mover:   {}", project_moves);
     println!("  Arquivos a mover:   {}", file_moves);
     println!("  Arquivos a renomear: {}", renames);
+    println!(
+        "  \x1b[33m🛡️ Itens protegidos:\x1b[0m  {} (ignorados/segurança)",
+        plan.protected_files.len()
+    );
     println!(
         "  \x1b[1mTotal de Propostas:\x1b[0m  {}",
         plan.proposals.len()
@@ -321,22 +323,24 @@ pub fn print_plan(plan: &Plan) {
 
     if !plan.protected_files.is_empty() {
         println!();
-        println!("\x1b[1m🛡️ Itens protegidos (metadata-only / sem ação):\x1b[0m");
+        println!("\x1b[1m🛡️ Resumo de Itens Protegidos (ignorados por segurança):\x1b[0m");
         println!("────────────────────────────────────────────────────────────────────────────────────────────────────");
-        for f in plan.protected_files.iter().take(10) {
-            let reason = f.protected_reason.as_deref().unwrap_or("Proteção padrão");
-            println!(
-                "  \x1b[2m{:<40} | {} | sem ação\x1b[0m",
-                truncate_path(&f.path, 40),
-                reason
-            );
+
+        let mut reasons_map: HashMap<String, usize> = HashMap::new();
+        for f in &plan.protected_files {
+            let reason = f
+                .protected_reason
+                .as_deref()
+                .unwrap_or("Proteção padrão")
+                .to_string();
+            *reasons_map.entry(reason).or_default() += 1;
         }
-        if plan.protected_files.len() > 10 {
-            println!(
-                "  \x1b[2m... e outros {} itens protegidos.\x1b[0m",
-                plan.protected_files.len() - 10
-            );
+
+        for (reason, count) in reasons_map {
+            println!("  • {:<50} | {} itens", reason, count);
         }
+
+        println!("\n  Nota: Nomes individuais de arquivos em paths protegidos (.ssh, .gnupg, etc) foram omitidos.");
         println!("────────────────────────────────────────────────────────────────────────────────────────────────────");
     }
 }
@@ -346,6 +350,75 @@ fn truncate_path(path: &str, max_len: usize) -> String {
     if path.len() <= max_len {
         return path.to_string();
     }
+    if max_len < 10 {
+        return path[..max_len].to_string();
+    }
     let half = (max_len - 3) / 2;
     format!("{}...{}", &path[..half], &path[path.len() - half..])
+}
+
+/// Imprime relatório focado na "Inbox" (Downloads, Desktop, etc.)
+pub fn print_inbox_report(plan: &Plan) {
+    println!("\x1b[1m📥 Kryonix Home Inbox (Downloads & Desktop)\x1b[0m");
+    println!("────────────────────────────────────────────────────────────────────────────────────────────────────");
+    println!(
+        "\x1b[1m  {:<6} | {:<30} -> {:<30} | {}\x1b[0m",
+        "RISCO", "ORIGEM (INBOX)", "DESTINO SUGERIDO", "CATEGORIA"
+    );
+    println!("────────────────────────────────────────────────────────────────────────────────────────────────────");
+
+    let mut count = 0;
+    for p in &plan.proposals {
+        let path_lower = p.old_path.to_lowercase();
+        let is_inbox = path_lower.contains("/downloads/")
+            || path_lower.contains("/desktop/")
+            || path_lower.contains("/área de trabalho/");
+
+        if is_inbox {
+            let risk_color = match p.risk.as_str() {
+                "low" => "\x1b[32m",
+                "medium" => "\x1b[33m",
+                "high" => "\x1b[31m",
+                _ => "",
+            };
+
+            let old_path = truncate_path(&p.old_path, 30);
+            let new_dir = truncate_path(&p.new_dir, 30);
+            let cat = p.category_label.as_deref().unwrap_or("Incerto");
+
+            println!(
+                "  {risk_color}{:<6}\x1b[0m | {:<30} -> {:<30} | {}",
+                p.risk.to_uppercase(),
+                old_path,
+                new_dir,
+                cat
+            );
+            count += 1;
+        }
+    }
+
+    if count == 0 {
+        println!("  Nenhum arquivo encontrado em Downloads ou Desktop precisando de organização.");
+    }
+
+    let protected_inbox = plan
+        .protected_files
+        .iter()
+        .filter(|f| {
+            let p = f.path.to_lowercase();
+            p.contains("/downloads/") || p.contains("/desktop/") || p.contains("/área de trabalho/")
+        })
+        .count();
+
+    if protected_inbox > 0 {
+        println!(
+            "\n  \x1b[33m🛡️ {} itens protegidos ignorados nesta visualização.\x1b[0m",
+            protected_inbox
+        );
+    }
+
+    println!("────────────────────────────────────────────────────────────────────────────────────────────────────");
+    println!(
+        "\nTotal de itens na Inbox: {count} | Use \x1b[1mkryonix home review\x1b[0m para aprovar."
+    );
 }

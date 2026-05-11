@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::path::Path;
 
-use crate::{apply, hashing, manifest, planner, report, rollback, scanner};
+use crate::{apply, hashing, manifest, planner, report, review, rollback, scanner};
 
 /// Kryonix Home Brain — scanner determinístico e organizador seguro da Home
 #[derive(Parser)]
@@ -92,6 +92,14 @@ enum Commands {
         /// Caminho opcional para arquivo de taxonomia TOML
         #[arg(long)]
         taxonomy_config: Option<String>,
+
+        /// Habilita inspeção de conteúdo para classificação mais precisa
+        #[arg(long)]
+        content_aware: bool,
+
+        /// Saída em formato JSON
+        #[arg(long)]
+        json: bool,
     },
     /// Diagnostica um arquivo de forma detalhada e estilizada, ou em formato JSON
     Diagnose {
@@ -197,6 +205,36 @@ enum Commands {
     },
     /// Reverte o último apply executado
     Rollback,
+    /// Exibe um dashboard humano com resumo da Home e propostas
+    Dashboard {
+        /// Caminho opcional para arquivo de taxonomia TOML
+        #[arg(long)]
+        taxonomy_config: Option<String>,
+    },
+    /// Foca na organização de Downloads e Área de Trabalho
+    Inbox {
+        /// Caminho opcional para arquivo de taxonomia TOML
+        #[arg(long)]
+        taxonomy_config: Option<String>,
+
+        /// Exibe saída em formato JSON
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+    /// Inicia a fila de revisão assistida para propostas
+    Review {
+        /// Filtrar por categoria (ex: downloads, financeiro)
+        #[arg(long)]
+        category: Option<String>,
+
+        /// Filtrar por nível de risco máximo (low, medium, high)
+        #[arg(long)]
+        max_risk: Option<String>,
+
+        /// Confiança mínima (0-100)
+        #[arg(long, default_value_t = 0)]
+        min_confidence: u8,
+    },
     /// Exporta os eventos do Home Brain em formato JSONL
     #[command(name = "export-memory")]
     ExportMemory {
@@ -277,38 +315,66 @@ pub fn run() -> Result<()> {
         Commands::Explain {
             path,
             taxonomy_config,
+            content_aware,
+            json,
         } => {
-            let file_meta = crate::metadata::collect(Path::new(&path), false);
+            let path_ref = Path::new(&path);
+            let is_protected = crate::metadata::is_protected_path(path_ref);
+
+            if is_protected.is_some() && content_aware {
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "status": "error",
+                            "message": "PROTECTED: conteúdo não inspecionado por política de segurança."
+                        })
+                    );
+                } else {
+                    println!("PROTECTED: conteúdo não inspecionado por política de segurança.");
+                }
+                return Ok(());
+            }
+
+            let file_meta = crate::metadata::collect(path_ref, content_aware);
             let config = crate::taxonomy::load_taxonomy_config(taxonomy_config.as_deref());
             let cat = crate::taxonomy::suggest_category_config(&file_meta, &config);
 
-            println!("=========================================");
-            println!("  Explicação de Classificação de Arquivo ");
-            println!("=========================================");
-            println!("Caminho:     {}", file_meta.path);
-            println!("Nome:        {}", file_meta.filename);
-            println!("Extensão:    {}", file_meta.extension);
-            println!("MIME:        {}", file_meta.mime);
-            println!("Tamanho:     {} bytes", file_meta.size_bytes);
-            println!("-----------------------------------------");
-            println!("Categoria:   {} ({})", cat.label, cat.id);
-            println!("Destino:     {}", cat.relative_dir.display());
-            println!("Confiança:   {:.2}", cat.confidence);
-            println!("Risco:       {}", cat.risk);
-            println!(
-                "Revisão:     {}",
-                if cat.needs_review {
-                    "Requer revisão humana"
-                } else {
-                    "Automatizado"
+            if json {
+                println!("{}", serde_json::to_string_pretty(&cat)?);
+            } else {
+                println!("=========================================");
+                println!("  Explicação de Classificação de Arquivo ");
+                println!("=========================================");
+                if let Some(ref reason) = is_protected {
+                    println!("🛡️ PROTEGIDO: {}", reason);
                 }
-            );
-            println!("Keywords:    {}", cat.matched_keywords.join(", "));
-            println!("Motivo:      {}", cat.reason);
-            if let Some(ref candidates) = cat.candidate_categories {
-                println!("Conflitos:   {}", candidates.join(", "));
+                println!("Caminho:     {}", file_meta.path);
+                println!("Nome:        {}", file_meta.filename);
+                println!("Extensão:    {}", file_meta.extension);
+                println!("MIME:        {}", file_meta.mime);
+                println!("Tamanho:     {} bytes", file_meta.size_bytes);
+                println!("-----------------------------------------");
+                println!("Categoria:   {} ({})", cat.label, cat.id);
+                println!("Destino:     {}", cat.relative_dir.display());
+                println!("Confiança:   {:.2}", cat.confidence);
+                println!("Risco:       {}", cat.risk);
+                println!(
+                    "Revisão:     {}",
+                    if cat.needs_review || is_protected.is_some() || path.contains("Obsidian Vault")
+                    {
+                        "Requer revisão humana (Mandatório)"
+                    } else {
+                        "Automatizado"
+                    }
+                );
+                println!("Keywords:    {}", cat.matched_keywords.join(", "));
+                println!("Motivo:      {}", cat.reason);
+                if let Some(ref candidates) = cat.candidate_categories {
+                    println!("Conflitos:   {}", candidates.join(", "));
+                }
+                println!("=========================================");
             }
-            println!("=========================================");
         }
         Commands::Diagnose {
             path,
@@ -567,6 +633,45 @@ pub fn run() -> Result<()> {
         }
         Commands::Rollback => {
             rollback::run_rollback()?;
+        }
+        Commands::Dashboard { taxonomy_config } => {
+            let scan = scanner::load_latest_scan()?;
+            let options = planner::PlanOptions {
+                taxonomy_config_path: taxonomy_config.as_deref(),
+                ..Default::default()
+            };
+            let plan = planner::generate_plan(&scan, &options);
+            report::print_plan_dashboard(&plan);
+        }
+        Commands::Inbox {
+            taxonomy_config,
+            json,
+        } => {
+            let scan = scanner::load_latest_scan()?;
+            let options = planner::PlanOptions {
+                taxonomy_config_path: taxonomy_config.as_deref(),
+                taxonomy_suggestions: true,
+                ..Default::default()
+            };
+            let plan = planner::generate_plan(&scan, &options);
+            if json {
+                println!("{}", serde_json::to_string_pretty(&plan)?);
+            } else {
+                report::print_inbox_report(&plan);
+            }
+        }
+        Commands::Review {
+            category,
+            max_risk,
+            min_confidence,
+        } => {
+            let mut m = manifest::get_latest_manifest()?;
+            let options = review::ReviewOptions {
+                category,
+                max_risk,
+                min_confidence,
+            };
+            review::run_review(&mut m, options)?;
         }
         Commands::ExportMemory {
             dry_run,

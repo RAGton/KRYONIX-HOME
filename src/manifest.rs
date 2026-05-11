@@ -57,9 +57,9 @@ pub struct Manifest {
     pub user: String,
     pub tool_version: String,
     pub actions: Vec<ManifestAction>,
+    pub protected_count: usize,
 }
 
-/// Helper for state directories.
 pub fn manifests_dir() -> Result<PathBuf> {
     let home = dirs::home_dir().context("Não foi possível determinar o diretório home")?;
     let dir = home.join(".local/state/kryonix/home-brain/manifests");
@@ -72,6 +72,56 @@ pub fn audits_dir() -> Result<PathBuf> {
     let dir = home.join(".local/state/kryonix/home-brain/audit");
     fs::create_dir_all(&dir)?;
     Ok(dir)
+}
+
+pub fn reports_dir() -> Result<PathBuf> {
+    let home = dirs::home_dir().context("Não foi possível determinar o diretório home")?;
+    let dir = home.join(".local/share/kryonix/home/reports");
+    fs::create_dir_all(&dir)?;
+    Ok(dir)
+}
+
+pub fn save_markdown_report(manifest: &Manifest) -> Result<PathBuf> {
+    let mut content = String::new();
+    content.push_str("# 🧠 Kryonix Home Brain - Relatório de Organização\n\n");
+    content.push_str(&format!("- **ID do Run:** `{}`\n", manifest.run_id));
+    content.push_str(&format!(
+        "- **Data:** {}\n",
+        manifest.timestamp.format("%Y-%m-%d %H:%M:%S")
+    ));
+    content.push_str(&format!(
+        "- **Host/User:** {} / {}\n",
+        manifest.hostname, manifest.user
+    ));
+    content.push_str(&format!(
+        "- **Arquivos protegidos ignorados:** {}\n\n",
+        manifest.protected_count
+    ));
+
+    content.push_str("## 📋 Propostas de Ação\n\n");
+    content.push_str("| DE ONDE ESTÁ | PARA ONDE VAI | CATEGORIA | CONFIANÇA | RISCO | MOTIVO |\n");
+    content.push_str("| :--- | :--- | :--- | :--- | :--- | :--- |\n");
+
+    for action in &manifest.actions {
+        let cat = action.category_label.as_deref().unwrap_or("Incerto");
+        let score = action
+            .taxonomy_score
+            .map(|s| format!("{:.0}%", s * 100.0))
+            .unwrap_or_else(|| "N/A".to_string());
+        let risk = action.risk.to_uppercase();
+
+        content.push_str(&format!(
+            "| `{}` | `{}` | {} | {} | {} | {} |\n",
+            action.source_path, action.target_path, cat, score, risk, action.reason
+        ));
+    }
+
+    content.push_str("\n---\n*Este relatório foi gerado automaticamente pelo Kryonix Home Brain.*");
+
+    let filename = format!("report_{}.md", manifest.timestamp.format("%Y%m%d-%H%M%S"));
+    let path = reports_dir()?.join(&filename);
+    fs::write(&path, content)?;
+    Ok(path)
 }
 
 pub fn create_manifest(plan: &Plan, scan: &ScanResult) -> Result<Manifest> {
@@ -186,6 +236,7 @@ pub fn create_manifest(plan: &Plan, scan: &ScanResult) -> Result<Manifest> {
         user: whoami::username().unwrap_or_else(|_| "unknown".to_string()),
         tool_version: env!("CARGO_PKG_VERSION").to_string(),
         actions,
+        protected_count: plan.protected_files.len(),
     };
 
     let filename = format!(
@@ -197,7 +248,11 @@ pub fn create_manifest(plan: &Plan, scan: &ScanResult) -> Result<Manifest> {
     let json = serde_json::to_string_pretty(&manifest)?;
     fs::write(&path, json)?;
 
-    eprintln!("Manifesto criado em: {}", path.display());
+    eprintln!("Manifesto JSON criado em: {}", path.display());
+
+    // Gerar relatório Markdown também
+    let report_path = save_markdown_report(&manifest)?;
+    eprintln!("Relatório Markdown criado em: {}", report_path.display());
 
     Ok(manifest)
 }
@@ -291,6 +346,7 @@ mod tests {
                 candidate_categories: None,
                 already_organized: false,
             }],
+            protected_count: 5,
         };
 
         let json = serde_json::to_string(&manifest).unwrap();
