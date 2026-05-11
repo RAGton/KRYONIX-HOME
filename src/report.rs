@@ -357,15 +357,23 @@ fn truncate_path(path: &str, max_len: usize) -> String {
     format!("{}...{}", &path[..half], &path[path.len() - half..])
 }
 
+fn truncate_string(s: &str, max_len: usize) -> String {
+    if s.len() <= max_len {
+        s.to_string()
+    } else {
+        format!("{}...", &s[..max_len - 3])
+    }
+}
+
 /// Imprime relatório focado na "Inbox" (Downloads, Desktop, etc.)
 pub fn print_inbox_report(plan: &Plan) {
     println!("\x1b[1m📥 Kryonix Home Inbox (Downloads & Desktop)\x1b[0m");
-    println!("────────────────────────────────────────────────────────────────────────────────────────────────────");
+    println!("────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────");
     println!(
-        "\x1b[1m  {:<6} | {:<30} -> {:<30} | {}\x1b[0m",
-        "RISCO", "ORIGEM (INBOX)", "DESTINO SUGERIDO", "CATEGORIA"
+        "\x1b[1m  {:<30} | {:<30} | {:<15} | {:<9} | {:<6} | {}\x1b[0m",
+        "DE ONDE ESTÁ", "PARA ONDE VAI", "CATEGORIA", "CONFIANÇA", "RISCO", "MOTIVO"
     );
-    println!("────────────────────────────────────────────────────────────────────────────────────────────────────");
+    println!("────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────");
 
     let mut count = 0;
     for p in &plan.proposals {
@@ -385,13 +393,13 @@ pub fn print_inbox_report(plan: &Plan) {
             let old_path = truncate_path(&p.old_path, 30);
             let new_dir = truncate_path(&p.new_dir, 30);
             let cat = p.category_label.as_deref().unwrap_or("Incerto");
+            let cat_trunc = truncate_string(cat, 15);
+            let conf_str = format!("{:.2}", p.confidence);
+            let risk = p.risk.to_uppercase();
 
             println!(
-                "  {risk_color}{:<6}\x1b[0m | {:<30} -> {:<30} | {}",
-                p.risk.to_uppercase(),
-                old_path,
-                new_dir,
-                cat
+                "  {:<30} | {:<30} | {:<15} | {:<9} | {risk_color}{:<6}\x1b[0m | {}",
+                old_path, new_dir, cat_trunc, conf_str, risk, p.reason
             );
             count += 1;
         }
@@ -417,7 +425,7 @@ pub fn print_inbox_report(plan: &Plan) {
         );
     }
 
-    println!("────────────────────────────────────────────────────────────────────────────────────────────────────");
+    println!("────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────");
     println!(
         "\nTotal de itens na Inbox: {count} | Use \x1b[1mkryonix home review\x1b[0m para aprovar."
     );

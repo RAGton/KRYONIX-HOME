@@ -210,6 +210,10 @@ enum Commands {
         /// Caminho opcional para arquivo de taxonomia TOML
         #[arg(long)]
         taxonomy_config: Option<String>,
+
+        /// Exibe saída em formato JSON
+        #[arg(long, default_value_t = false)]
+        json: bool,
     },
     /// Foca na organização de Downloads e Área de Trabalho
     Inbox {
@@ -228,7 +232,7 @@ enum Commands {
         category: Option<String>,
 
         /// Filtrar por nível de risco máximo (low, medium, high)
-        #[arg(long)]
+        #[arg(long, aliases = ["risk"])]
         max_risk: Option<String>,
 
         /// Confiança mínima (0-100)
@@ -634,20 +638,41 @@ pub fn run() -> Result<()> {
         Commands::Rollback => {
             rollback::run_rollback()?;
         }
-        Commands::Dashboard { taxonomy_config } => {
-            let scan = scanner::load_latest_scan()?;
+        Commands::Dashboard {
+            taxonomy_config,
+            json,
+        } => {
+            let scan = match scanner::load_latest_scan() {
+                Ok(s) => s,
+                Err(_) => {
+                    let scan = scanner::run_scan_options(false, false, false)?;
+                    let _ = scanner::save_scan(&scan);
+                    scan
+                }
+            };
             let options = planner::PlanOptions {
                 taxonomy_config_path: taxonomy_config.as_deref(),
                 ..Default::default()
             };
             let plan = planner::generate_plan(&scan, &options);
-            report::print_plan_dashboard(&plan);
+            if json {
+                println!("{}", serde_json::to_string_pretty(&plan)?);
+            } else {
+                report::print_plan_dashboard(&plan);
+            }
         }
         Commands::Inbox {
             taxonomy_config,
             json,
         } => {
-            let scan = scanner::load_latest_scan()?;
+            let scan = match scanner::load_latest_scan() {
+                Ok(s) => s,
+                Err(_) => {
+                    let scan = scanner::run_scan_options(false, false, false)?;
+                    let _ = scanner::save_scan(&scan);
+                    scan
+                }
+            };
             let options = planner::PlanOptions {
                 taxonomy_config_path: taxonomy_config.as_deref(),
                 taxonomy_suggestions: true,
