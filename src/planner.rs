@@ -64,6 +64,7 @@ pub struct Plan {
     pub protected_files: Vec<FileMetadata>,
     pub content_aware: bool,
     pub context_aware: bool,
+    #[serde(default)]
     pub full_home: bool,
 }
 

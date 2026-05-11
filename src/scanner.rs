@@ -38,6 +38,7 @@ pub struct ScanResult {
     pub files_error: usize,
     pub total_size_bytes: u64,
     pub warnings: Vec<String>,
+    #[serde(default)]
     pub full_home: bool,
 }
 
