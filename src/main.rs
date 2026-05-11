@@ -15,6 +15,7 @@ mod report;
 mod review;
 mod rollback;
 mod scanner;
+pub mod state;
 pub mod taxonomy;
 
 fn main() {

@@ -43,18 +43,30 @@ pub fn should_ignore_dir_options(path: &Path, full_home: bool) -> bool {
         None => return true,
     };
 
+    // Poda imediata de áreas de cache, config, dependências ou compiladores em qualquer modo
+    if name == ".cache"
+        || name == ".config"
+        || name == ".local"
+        || name == ".mozilla"
+        || name == ".var"
+        || name == ".cargo"
+        || name == ".rustup"
+        || name == ".ssh"
+        || name == ".gnupg"
+        || name == "node_modules"
+        || name == "target"
+        || name == ".git"
+        || name == ".venv"
+        || name == "__pycache__"
+        || name == "result"
+        || name.starts_with("result-")
+        || name == ".direnv"
+        || name == "nix"
+    {
+        return true;
+    }
+
     if full_home {
-        // No full_home, queremos inventariar diretórios ocultos importantes (.ssh, .config, .local),
-        // mas ainda ignorar diretórios de build/dependências gigantes e redundantes.
-        if name == "node_modules"
-            || name == "target"
-            || name == "result"
-            || name == ".direnv"
-            || name == ".git"
-            || name == ".cache"
-        {
-            return true;
-        }
         return false;
     }
 
@@ -111,4 +123,81 @@ pub fn is_secret_file(path: &Path) -> bool {
     }
 
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_early_pruning_directories() {
+        // Must ignore system/config/cache paths in BOTH standard and full_home modes
+        for mode in &[false, true] {
+            assert!(should_ignore_dir_options(
+                Path::new("/home/user/.cache"),
+                *mode
+            ));
+            assert!(should_ignore_dir_options(
+                Path::new("/home/user/.config"),
+                *mode
+            ));
+            assert!(should_ignore_dir_options(
+                Path::new("/home/user/.local"),
+                *mode
+            ));
+            assert!(should_ignore_dir_options(
+                Path::new("/home/user/.ssh"),
+                *mode
+            ));
+            assert!(should_ignore_dir_options(
+                Path::new("/home/user/.gnupg"),
+                *mode
+            ));
+            assert!(should_ignore_dir_options(
+                Path::new("/home/user/.git"),
+                *mode
+            ));
+            assert!(should_ignore_dir_options(
+                Path::new("/home/user/node_modules"),
+                *mode
+            ));
+            assert!(should_ignore_dir_options(
+                Path::new("/home/user/target"),
+                *mode
+            ));
+            assert!(should_ignore_dir_options(
+                Path::new("/home/user/__pycache__"),
+                *mode
+            ));
+        }
+    }
+
+    #[test]
+    fn test_hidden_directories_modes() {
+        // Hidden directories are ignored in standard mode
+        assert!(should_ignore_dir_options(
+            Path::new("/home/user/.custom_hidden"),
+            false
+        ));
+
+        // Non-system hidden directories are NOT ignored in full_home mode
+        assert!(!should_ignore_dir_options(
+            Path::new("/home/user/.custom_hidden"),
+            true
+        ));
+    }
+
+    #[test]
+    fn test_is_secret_file() {
+        // Secret files
+        assert!(is_secret_file(Path::new("/home/user/.env")));
+        assert!(is_secret_file(Path::new("/home/user/id_rsa")));
+        assert!(is_secret_file(Path::new("/home/user/id_ed25519")));
+        assert!(is_secret_file(Path::new("/home/user/key.pem")));
+        assert!(is_secret_file(Path::new("/home/user/token.secret")));
+
+        // Normal files
+        assert!(!is_secret_file(Path::new("/home/user/notes.txt")));
+        assert!(!is_secret_file(Path::new("/home/user/invoice.pdf")));
+    }
 }

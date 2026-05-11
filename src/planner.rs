@@ -6,16 +6,38 @@ use crate::metadata::{FileMetadata, FileStatus};
 use crate::scanner::ScanResult;
 
 /// Categorias de destino para organização.
+fn default_medium() -> String {
+    "medium".to_string()
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_zero_f64() -> f64 {
+    0.0
+}
+
+fn default_schema_version() -> String {
+    "1.0".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlanProposal {
     pub action: String,
+    #[serde(default = "default_medium")]
     pub risk: String,
+    #[serde(default = "default_zero_f64")]
     pub confidence: f64,
     pub old_path: String,
     pub new_dir: String,
+    #[serde(default)]
     pub reason: String,
+    #[serde(default)]
     pub evidence: String,
+    #[serde(default = "default_true")]
     pub needs_review: bool,
+    #[serde(default)]
     pub protected: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub new_filename: Option<String>,
@@ -39,6 +61,7 @@ pub struct PlanProposal {
     pub taxonomy_profile: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub candidate_categories: Option<Vec<String>>,
+    #[serde(default)]
     pub already_organized: bool,
 
     // Novos campos para projetos
@@ -56,16 +79,24 @@ pub struct PlanProposal {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Plan {
     pub run_id: String,
+    #[serde(default)]
     pub mode: String,
     pub home_dir: String,
+    #[serde(default)]
     pub files_seen: usize,
+    #[serde(default)]
     pub projects_seen: usize,
     pub proposals: Vec<PlanProposal>,
+    #[serde(default)]
     pub protected_files: Vec<FileMetadata>,
+    #[serde(default)]
     pub content_aware: bool,
+    #[serde(default)]
     pub context_aware: bool,
     #[serde(default)]
     pub full_home: bool,
+    #[serde(default = "default_schema_version")]
+    pub schema_version: String,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -334,6 +365,7 @@ pub fn generate_plan(scan: &ScanResult, options: &PlanOptions) -> Plan {
     }
 
     Plan {
+        schema_version: "1.0".to_string(),
         run_id: scan.run_id.clone(),
         mode: "dry-run".to_string(),
         home_dir: scan.home_dir.clone(),
@@ -552,6 +584,7 @@ mod tests {
         files.push(create_mock_file("/home/user/Downloads/public.pdf", false));
 
         let scan = ScanResult {
+            schema_version: "1.0".to_string(),
             run_id: "test".to_string(),
             timestamp: Utc::now(),
             home_dir: "/home/user".to_string(),
@@ -564,6 +597,11 @@ mod tests {
             total_size_bytes: 4096,
             warnings: vec![],
             full_home: true,
+            denied_count: 0,
+            skipped_count: 0,
+            protected_count: 3,
+            inbox_count: 1,
+            project_count: 0,
         };
 
         let options = PlanOptions {
@@ -587,5 +625,24 @@ mod tests {
         assert!(protected_paths.contains(&&"~/.ssh/[PROTECTED: protected]".to_string()));
         assert!(protected_paths.contains(&&"~/.gnupg/[PROTECTED: protected]".to_string()));
         assert!(protected_paths.contains(&&"~/.config/[PROTECTED: protected]".to_string()));
+    }
+
+    #[test]
+    fn test_legacy_schema_compatibility() {
+        let legacy_json = r#"{
+            "run_id": "legacy_run",
+            "timestamp": "2026-05-11T12:00:00Z",
+            "home_dir": "/home/user",
+            "proposals": [],
+            "protected_files": []
+        }"#;
+
+        let plan: Result<Plan, _> = serde_json::from_str(legacy_json);
+        assert!(plan.is_ok());
+        let plan = plan.unwrap();
+        assert_eq!(plan.run_id, "legacy_run");
+        // default fields must populate successfully
+        assert_eq!(plan.files_seen, 0);
+        assert!(!plan.full_home);
     }
 }

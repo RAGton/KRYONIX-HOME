@@ -13,6 +13,26 @@ pub fn run_review(manifest: &mut Manifest, options: ReviewOptions) -> Result<()>
     println!("\x1b[1m🤝 Kryonix Home Review — Fila de Aprovação Assistida\x1b[0m");
     println!("────────────────────────────────────────────────────────────");
 
+    let mut safe = 0;
+    let mut review_req = 0;
+    let mut high_risk = 0;
+    for action in &manifest.actions {
+        if action.status == "planned" && !action.already_organized {
+            if action.risk == "low" {
+                safe += 1;
+            } else if action.risk == "medium" {
+                review_req += 1;
+            } else {
+                high_risk += 1;
+            }
+        }
+    }
+    println!("Fila Atual de Decisões:");
+    println!("  🟢 Ações Seguras (Risco Baixo):     {}", safe);
+    println!("  🟡 Precisam de Revisão (Risco Méd):  {}", review_req);
+    println!("  🔴 Alto Risco (Risco Alto):         {}", high_risk);
+    println!("────────────────────────────────────────────────────────────");
+
     let mut approved_count = 0;
     let mut skipped_count = 0;
 

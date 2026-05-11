@@ -244,9 +244,14 @@ pub fn print_plan_dashboard(plan: &Plan) {
     let downloads_count = plan
         .proposals
         .iter()
-        .filter(|p| p.old_path.to_lowercase().contains("/downloads/"))
+        .filter(|p| {
+            let path_lower = p.old_path.to_lowercase();
+            path_lower.contains("/downloads/")
+                || path_lower.contains("/desktop/")
+                || path_lower.contains("/área de trabalho/")
+        })
         .count();
-    println!("│ Downloads pendentes: {:<37} │", downloads_count);
+    println!("│ Inbox (Pendentes): {:<38} │", downloads_count);
     println!("│ Revisão necessária: {:<38} │", review_count);
     println!("│ Itens protegidos: {:<40} │", plan.protected_files.len());
     println!("\x1b[1m╰────────────────────────────────────────────────────────────╯\x1b[0m");
@@ -267,6 +272,44 @@ pub fn print_plan_dashboard(plan: &Plan) {
         "  \x1b[1mTotal de Propostas:\x1b[0m  {}",
         plan.proposals.len()
     );
+
+    // Calcular Top 5 Categorias
+    let mut category_counts = HashMap::new();
+    for p in &plan.proposals {
+        let cat = p
+            .category_label
+            .clone()
+            .unwrap_or_else(|| "Incerto".to_string());
+        *category_counts.entry(cat).or_insert(0) += 1;
+    }
+    let mut categories_sorted: Vec<(String, usize)> = category_counts.into_iter().collect();
+    categories_sorted.sort_by(|a, b| b.1.cmp(&a.1));
+
+    // Calcular Top 5 Diretórios de Destino
+    let mut dir_counts = HashMap::new();
+    for p in &plan.proposals {
+        let dir = p.new_dir.clone();
+        *dir_counts.entry(dir).or_insert(0) += 1;
+    }
+    let mut dirs_sorted: Vec<(String, usize)> = dir_counts.into_iter().collect();
+    dirs_sorted.sort_by(|a, b| b.1.cmp(&a.1));
+
+    println!("\n\x1b[1m📂 Top 5 Categorias Sugeridas:\x1b[0m");
+    for (cat, count) in categories_sorted.iter().take(5) {
+        println!("  - {:<25} ({:>3} propostas)", cat, count);
+    }
+
+    println!("\n\x1b[1m📍 Top 5 Diretórios de Destino:\x1b[0m");
+    for (dir, count) in dirs_sorted.iter().take(5) {
+        let truncated_dir = truncate_path(dir, 35);
+        println!("  - {:<35} ({:>3} propostas)", truncated_dir, count);
+    }
+
+    println!("\n\x1b[1m💡 Passos Recomendados:\x1b[0m");
+    println!("  1. Analisar a caixa de entrada: \x1b[1mkryonix home inbox\x1b[0m");
+    println!("  2. Revisar propostas interativamente: \x1b[1mkryonix home review\x1b[0m");
+    println!("  3. Executar simulação segura: \x1b[1mkryonix home apply --dry-run\x1b[0m");
+    println!("  4. Confirmar e aplicar: \x1b[1mkryonix home apply --confirm\x1b[0m");
     println!();
 }
 
@@ -376,6 +419,10 @@ pub fn print_inbox_report(plan: &Plan) {
     println!("────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────");
 
     let mut count = 0;
+    let mut temp_files_count = 0;
+    let mut temp_files_size = 0;
+    let mut low_conf_count = 0;
+
     for p in &plan.proposals {
         let path_lower = p.old_path.to_lowercase();
         let is_inbox = path_lower.contains("/downloads/")
@@ -383,6 +430,30 @@ pub fn print_inbox_report(plan: &Plan) {
             || path_lower.contains("/área de trabalho/");
 
         if is_inbox {
+            // Verifica arquivos temporários de navegadores
+            let filename = std::path::Path::new(&p.old_path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("");
+            let is_temp = filename.starts_with(".org.chromium")
+                || filename.starts_with("chromium.")
+                || filename.ends_with(".crdownload")
+                || filename.ends_with(".part")
+                || filename.ends_with(".tmp")
+                || filename.ends_with(".download");
+
+            if is_temp {
+                temp_files_count += 1;
+                temp_files_size += std::fs::metadata(&p.old_path).map(|m| m.len()).unwrap_or(0);
+                continue;
+            }
+
+            // Agrupa itens de baixíssima confiança (<= 0.20)
+            if p.confidence <= 0.20 {
+                low_conf_count += 1;
+                continue;
+            }
+
             let risk_color = match p.risk.as_str() {
                 "low" => "\x1b[32m",
                 "medium" => "\x1b[33m",
@@ -405,8 +476,34 @@ pub fn print_inbox_report(plan: &Plan) {
         }
     }
 
-    if count == 0 {
+    // Exibe temporários de forma agregada
+    if temp_files_count > 0 {
+        let size_mb = temp_files_size as f64 / 1024.0 / 1024.0;
+        println!(
+            "  {:<30} | {:<30} | {:<15} | {:<9} | \x1b[31m{:<6}\x1b[0m | {} ({:.1} MB)",
+            "Downloads/Temporários/*",
+            "Nenhum (Recomendado apagar)",
+            "Temporários",
+            "1.00",
+            "HIGH",
+            format!(
+                "Agrupamento de {} arquivos temporários/crdownload incompletos",
+                temp_files_count
+            ),
+            size_mb
+        );
+        count += 1;
+    }
+
+    if count == 0 && low_conf_count == 0 {
         println!("  Nenhum arquivo encontrado em Downloads ou Desktop precisando de organização.");
+    }
+
+    if low_conf_count > 0 {
+        println!(
+            "  \x1b[33mℹ️ {} itens com baixíssima confiança (<= 0.20) foram agrupados e ocultados. Use 'kryonix home review' para tratá-los.\x1b[0m",
+            low_conf_count
+        );
     }
 
     let protected_inbox = plan
@@ -427,6 +524,6 @@ pub fn print_inbox_report(plan: &Plan) {
 
     println!("────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────");
     println!(
-        "\nTotal de itens na Inbox: {count} | Use \x1b[1mkryonix home review\x1b[0m para aprovar."
+        "\nTotal de itens na Inbox exibidos: {count} | Use \x1b[1mkryonix home review\x1b[0m para aprovar."
     );
 }

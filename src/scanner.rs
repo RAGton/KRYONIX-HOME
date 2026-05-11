@@ -24,6 +24,10 @@ const SCAN_DIRS: &[&str] = &[
     "Documents",
 ];
 
+fn default_schema_version() -> String {
+    "1.0".to_string()
+}
+
 /// Resultado completo de um scan.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanResult {
@@ -40,6 +44,18 @@ pub struct ScanResult {
     pub warnings: Vec<String>,
     #[serde(default)]
     pub full_home: bool,
+    #[serde(default = "default_schema_version")]
+    pub schema_version: String,
+    #[serde(default)]
+    pub denied_count: usize,
+    #[serde(default)]
+    pub skipped_count: usize,
+    #[serde(default)]
+    pub protected_count: usize,
+    #[serde(default)]
+    pub inbox_count: usize,
+    #[serde(default)]
+    pub project_count: usize,
 }
 
 /// Retorna o diretório de estado do Kryonix Home Brain.
@@ -68,13 +84,14 @@ fn generate_run_id() -> String {
 
 /// Executa o scan da Home do usuário.
 pub fn run_scan() -> Result<ScanResult> {
-    run_scan_options(false, false, false)
+    run_scan_options(false, false, false, false)
 }
 
 pub fn run_scan_options(
     full_home: bool,
     metadata_only_override: bool,
     safe_content: bool,
+    inbox_only: bool,
 ) -> Result<ScanResult> {
     let home = dirs::home_dir().context("Não foi possível determinar o diretório home")?;
     let run_id = generate_run_id();
@@ -97,7 +114,27 @@ pub fn run_scan_options(
             safe_content,
         );
     } else {
-        for dir_name in SCAN_DIRS {
+        let scan_targets = if inbox_only {
+            vec!["Downloads", "Desktop", "Área de Trabalho"]
+        } else {
+            vec![
+                "Downloads",
+                "Documentos",
+                "Imagens",
+                "Vídeos",
+                "Músicas",
+                "Área de Trabalho",
+                "Desktop",
+                "Pictures",
+                "Videos",
+                "Music",
+                "Documents",
+                "Projects",
+                "Projetos",
+            ]
+        };
+
+        for dir_name in scan_targets {
             let scan_path = home.join(dir_name);
             if !scan_path.exists() || !scan_path.is_dir() {
                 continue;
@@ -138,6 +175,27 @@ pub fn run_scan_options(
     // Adicionar tamanho dos projetos ao total
     total_size_bytes += projects.iter().map(|p| p.total_size_bytes).sum::<u64>();
 
+    let project_count = projects.len();
+    let inbox_count = files
+        .iter()
+        .filter(|f| {
+            let p = Path::new(&f.path);
+            p.components().any(|c| {
+                let s = c.as_os_str();
+                s == "Downloads" || s == "Desktop" || s == "Área de Trabalho"
+            })
+        })
+        .count();
+    let protected_count = files
+        .iter()
+        .filter(|f| {
+            let p = Path::new(&f.path);
+            ignore::is_secret_file(p)
+        })
+        .count();
+    let denied_count = files_error;
+    let skipped_count = files_ignored;
+
     Ok(ScanResult {
         run_id,
         timestamp,
@@ -151,6 +209,12 @@ pub fn run_scan_options(
         total_size_bytes,
         warnings,
         full_home,
+        schema_version: "1.0".to_string(),
+        denied_count,
+        skipped_count,
+        protected_count,
+        inbox_count,
+        project_count,
     })
 }
 

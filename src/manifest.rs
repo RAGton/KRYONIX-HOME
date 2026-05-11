@@ -8,6 +8,14 @@ use serde::{Deserialize, Serialize};
 use crate::planner::Plan;
 use crate::scanner::ScanResult;
 
+fn default_medium() -> String {
+    "medium".to_string()
+}
+
+fn default_schema_version() -> String {
+    "1.0".to_string()
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ManifestAction {
     pub source_path: String,
@@ -16,8 +24,11 @@ pub struct ManifestAction {
     pub old_hash: Option<String>,
     pub size_bytes: u64,
     pub mime: String,
+    #[serde(default)]
     pub reason: String,
+    #[serde(default = "default_medium")]
     pub risk: String,
+    #[serde(default)]
     pub status: String, // "planned", "executed", "skipped", "failed"
     pub error_msg: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -46,6 +57,7 @@ pub struct ManifestAction {
     pub taxonomy_profile: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub candidate_categories: Option<Vec<String>>,
+    #[serde(default)]
     pub already_organized: bool,
 }
 
@@ -57,7 +69,10 @@ pub struct Manifest {
     pub user: String,
     pub tool_version: String,
     pub actions: Vec<ManifestAction>,
+    #[serde(default)]
     pub protected_count: usize,
+    #[serde(default = "default_schema_version")]
+    pub schema_version: String,
 }
 
 pub fn manifests_dir() -> Result<PathBuf> {
@@ -228,6 +243,7 @@ pub fn create_manifest(plan: &Plan, scan: &ScanResult) -> Result<Manifest> {
     }
 
     let manifest = Manifest {
+        schema_version: "1.0".to_string(),
         run_id: plan.run_id.clone(),
         timestamp: Utc::now(),
         hostname: hostname::get()
@@ -270,7 +286,33 @@ pub fn get_latest_manifest() -> Result<Manifest> {
         .last()
         .context("Nenhum manifesto encontrado. Execute 'kryonix-home manifest create' primeiro.")?;
     let content = fs::read_to_string(latest.path())?;
-    let manifest: Manifest = serde_json::from_str(&content)?;
+
+    let manifest: Manifest = match serde_json::from_str(&content) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!(
+                "⚠️ Erro ao decodificar manifesto antigo ou incompatível: {}",
+                e
+            );
+            let backup_dir = dir.parent().unwrap().join("backups");
+            let _ = fs::create_dir_all(&backup_dir);
+            let backup_path = backup_dir.join(format!(
+                "corrupted_manifest_{}.json",
+                Utc::now().format("%Y%m%d-%H%M%S")
+            ));
+            if fs::copy(latest.path(), &backup_path).is_ok() {
+                let _ = fs::remove_file(latest.path());
+                eprintln!(
+                    "O manifesto antigo/incompatível foi movido com segurança para: {}",
+                    backup_path.display()
+                );
+            }
+            anyhow::bail!(
+                "Manifesto incompatível detectado e movido para backup. Por favor, execute o comando de geração para recriá-lo:\n\
+                 -> kryonix home manifest create"
+            );
+        }
+    };
 
     Ok(manifest)
 }
@@ -315,6 +357,7 @@ mod tests {
     #[test]
     fn test_manifest_serialization() {
         let manifest = Manifest {
+            schema_version: "1.0".to_string(),
             run_id: "test-123".to_string(),
             timestamp: Utc::now(),
             hostname: "testhost".to_string(),

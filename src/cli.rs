@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::path::Path;
 
-use crate::{apply, hashing, manifest, planner, report, review, rollback, scanner};
+use crate::{apply, hashing, manifest, planner, report, review, rollback, scanner, state};
 
 /// Kryonix Home Brain — scanner determinístico e organizador seguro da Home
 #[derive(Parser)]
@@ -49,6 +49,24 @@ enum ManifestCommands {
 }
 
 #[derive(Subcommand)]
+enum StateCommands {
+    /// Diagnostica o estado do cache e pastas do Home Brain
+    Doctor,
+    /// Limpa com segurança caches ou manifestos com esquemas de versões antigas
+    Clean {
+        /// Remove manifestos e runs antigos com erro de esquema ou obsoletos
+        #[arg(long, default_value_t = false)]
+        old_schema: bool,
+    },
+    /// Reseta de forma limpa o histórico de runs do scanner (cache)
+    Reset {
+        /// Limpa o cache temporário de escaneamento sem alterar a Home do usuário
+        #[arg(long, default_value_t = false)]
+        only_cache: bool,
+    },
+}
+
+#[derive(Subcommand)]
 enum Commands {
     /// Escaneia a Home e salva resultado em JSON
     Scan {
@@ -63,6 +81,10 @@ enum Commands {
         /// Lê apenas conteúdo de arquivos considerados seguros e pequenos
         #[arg(long, default_value_t = false)]
         safe_content: bool,
+
+        /// Realiza o scan focado apenas no Inbox (Downloads e Desktop)
+        #[arg(long, default_value_t = false)]
+        inbox: bool,
     },
     /// Mostra relatório do último scan
     Report,
@@ -224,6 +246,14 @@ enum Commands {
         /// Exibe saída em formato JSON
         #[arg(long, default_value_t = false)]
         json: bool,
+
+        /// Limite máximo de itens a exibir
+        #[arg(long)]
+        limit: Option<usize>,
+
+        /// Filtro de confiança mínima (0.0 a 1.0)
+        #[arg(long)]
+        min_confidence: Option<f64>,
     },
     /// Inicia a fila de revisão assistida para propostas
     Review {
@@ -238,6 +268,11 @@ enum Commands {
         /// Confiança mínima (0-100)
         #[arg(long, default_value_t = 0)]
         min_confidence: u8,
+    },
+    /// Gerencia a saúde e estado dos diretórios de cache do Home Brain
+    State {
+        #[command(subcommand)]
+        command: StateCommands,
     },
     /// Exporta os eventos do Home Brain em formato JSONL
     #[command(name = "export-memory")]
@@ -264,8 +299,9 @@ pub fn run() -> Result<()> {
             full_home,
             metadata_only,
             safe_content,
+            inbox,
         } => {
-            let scan = scanner::run_scan_options(full_home, metadata_only, safe_content)?;
+            let scan = scanner::run_scan_options(full_home, metadata_only, safe_content, inbox)?;
             scanner::save_scan(&scan)?;
             report::print_scan_summary(&scan);
             eprintln!("\nNenhuma alteração foi feita.");
@@ -530,7 +566,7 @@ pub fn run() -> Result<()> {
             dry_run: _,
         } => {
             let scan = if full_home {
-                scanner::run_scan_options(true, false, true)?
+                scanner::run_scan_options(true, false, true, false)?
             } else {
                 scanner::load_latest_scan()?
             };
@@ -608,6 +644,17 @@ pub fn run() -> Result<()> {
                 manifest::show_manifest(&m);
             }
         },
+        Commands::State { command } => match command {
+            StateCommands::Doctor => {
+                state::run_doctor()?;
+            }
+            StateCommands::Clean { old_schema } => {
+                state::run_clean(old_schema)?;
+            }
+            StateCommands::Reset { only_cache } => {
+                state::run_reset(only_cache)?;
+            }
+        },
         Commands::Apply {
             dry_run,
             confirm,
@@ -645,7 +692,7 @@ pub fn run() -> Result<()> {
             let scan = match scanner::load_latest_scan() {
                 Ok(s) => s,
                 Err(_) => {
-                    let scan = scanner::run_scan_options(false, false, false)?;
+                    let scan = scanner::run_scan_options(false, false, false, false)?;
                     let _ = scanner::save_scan(&scan);
                     scan
                 }
@@ -664,11 +711,13 @@ pub fn run() -> Result<()> {
         Commands::Inbox {
             taxonomy_config,
             json,
+            limit,
+            min_confidence,
         } => {
             let scan = match scanner::load_latest_scan() {
                 Ok(s) => s,
                 Err(_) => {
-                    let scan = scanner::run_scan_options(false, false, false)?;
+                    let scan = scanner::run_scan_options(false, false, false, true)?;
                     let _ = scanner::save_scan(&scan);
                     scan
                 }
@@ -678,7 +727,16 @@ pub fn run() -> Result<()> {
                 taxonomy_suggestions: true,
                 ..Default::default()
             };
-            let plan = planner::generate_plan(&scan, &options);
+            let mut plan = planner::generate_plan(&scan, &options);
+
+            if let Some(min_conf) = min_confidence {
+                plan.proposals.retain(|p| p.confidence >= min_conf);
+            }
+
+            if let Some(lim) = limit {
+                plan.proposals.truncate(lim);
+            }
+
             if json {
                 println!("{}", serde_json::to_string_pretty(&plan)?);
             } else {
@@ -690,7 +748,27 @@ pub fn run() -> Result<()> {
             max_risk,
             min_confidence,
         } => {
-            let mut m = manifest::get_latest_manifest()?;
+            let mut m = match manifest::get_latest_manifest() {
+                Ok(m) => m,
+                Err(_) => {
+                    eprintln!("ℹ️ Nenhum manifesto encontrado para revisão. Iniciando geração assistida automática...");
+                    let scan = match scanner::load_latest_scan() {
+                        Ok(s) => s,
+                        Err(_) => {
+                            let scan = scanner::run_scan_options(false, false, false, false)?;
+                            let _ = scanner::save_scan(&scan);
+                            scan
+                        }
+                    };
+                    let options = planner::PlanOptions {
+                        taxonomy_suggestions: true,
+                        rename_suggestions: true,
+                        ..Default::default()
+                    };
+                    let plan = planner::generate_plan(&scan, &options);
+                    manifest::create_manifest(&plan, &scan)?
+                }
+            };
             let options = review::ReviewOptions {
                 category,
                 max_risk,
