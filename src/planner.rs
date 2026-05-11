@@ -1,3 +1,4 @@
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -58,6 +59,10 @@ pub struct Plan {
     pub files_seen: usize,
     pub projects_seen: usize,
     pub proposals: Vec<PlanProposal>,
+    pub protected_files: Vec<FileMetadata>,
+    pub content_aware: bool,
+    pub context_aware: bool,
+    pub full_home: bool,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -71,16 +76,50 @@ pub struct PlanOptions<'a> {
     pub projects_only: bool,
     pub limit: Option<usize>,
     pub ollama: bool,
+    pub full_home: bool,
+    pub content_aware: bool,
+    pub context_aware: bool,
 }
 
 /// Gera um plano de organização determinístico baseado em MIME/extensão e, opcionalmente, sugere renomeações.
 /// Este plano é SOMENTE informativo (dry-run). Nenhuma ação é executada.
 pub fn generate_plan(scan: &ScanResult, options: &PlanOptions) -> Plan {
     let mut proposals = Vec::new();
+    let mut protected_files = Vec::new();
     let taxonomy_config = crate::taxonomy::load_taxonomy_config(options.taxonomy_config_path);
 
     // 1. Processar Projetos primeiro
     for project in &scan.projects {
+        // SEGURANÇA: Projetos em paths protegidos NUNCA devem gerar propostas de ação
+        if let Some(reason) = crate::metadata::is_protected_path(Path::new(&project.root_path)) {
+            // Converter ProjectCandidate para FileMetadata fake para entrar na lista de protegidos
+            let fake_meta = FileMetadata {
+                path: project.root_path.clone(),
+                filename: project.name.clone(),
+                extension: String::new(),
+                mime: "inode/directory".to_string(),
+                size_bytes: project.total_size_bytes,
+                modified_at: None,
+                is_dir: true,
+                is_file: false,
+                is_symlink: false,
+                is_hidden: project.root_path.contains("/."),
+                is_project_member: true,
+                project_root: Some(project.root_path.clone()),
+                source_zone: None,
+                readable: true,
+                content_sampled: false,
+                metadata_only: true,
+                protected_reason: Some(reason),
+                warnings: vec![],
+                content: None,
+                context: None,
+                status: FileStatus::Analyzed,
+            };
+            protected_files.push(fake_meta);
+            continue;
+        }
+
         let taxonomy_config_ref = &taxonomy_config;
         let mut proposal = PlanProposal {
             action: "move_project".to_string(),
@@ -147,6 +186,12 @@ pub fn generate_plan(scan: &ScanResult, options: &PlanOptions) -> Plan {
         // 2. Processar Arquivos Soltos
         for file in &scan.files {
             if file.status != FileStatus::Analyzed {
+                continue;
+            }
+
+            // SEGURANÇA: Arquivos protegidos ou metadata-only NUNCA devem gerar propostas de ação
+            if file.metadata_only || file.protected_reason.is_some() {
+                protected_files.push(file.clone());
                 continue;
             }
 
@@ -293,6 +338,10 @@ pub fn generate_plan(scan: &ScanResult, options: &PlanOptions) -> Plan {
         files_seen: scan.files_analyzed,
         projects_seen: scan.projects.len(),
         proposals,
+        protected_files,
+        content_aware: options.content_aware,
+        context_aware: options.context_aware,
+        full_home: scan.full_home,
     }
 }
 
@@ -409,4 +458,87 @@ fn classify_file(file: &FileMetadata) -> Option<PlanProposal> {
         project_file_count: None,
         project_total_size: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::metadata::FileStatus;
+
+    #[test]
+    fn test_planner_skips_protected_files() {
+        let mut files = Vec::new();
+        // Arquivo protegido
+        files.push(FileMetadata {
+            path: "/home/user/.ssh/id_rsa".to_string(),
+            filename: "id_rsa".to_string(),
+            extension: String::new(),
+            mime: "application/octet-stream".to_string(),
+            size_bytes: 1024,
+            modified_at: None,
+            is_dir: false,
+            is_file: true,
+            is_symlink: false,
+            is_hidden: true,
+            is_project_member: false,
+            project_root: None,
+            source_zone: None,
+            readable: false,
+            content_sampled: false,
+            metadata_only: true,
+            protected_reason: Some("sensitive .ssh directory".to_string()),
+            warnings: vec![],
+            content: None,
+            context: None,
+            status: FileStatus::Analyzed,
+        });
+        // Arquivo normal
+        files.push(FileMetadata {
+            path: "/home/user/Downloads/test.pdf".to_string(),
+            filename: "test.pdf".to_string(),
+            extension: "pdf".to_string(),
+            mime: "application/pdf".to_string(),
+            size_bytes: 1024,
+            modified_at: None,
+            is_dir: false,
+            is_file: true,
+            is_symlink: false,
+            is_hidden: false,
+            is_project_member: false,
+            project_root: None,
+            source_zone: None,
+            readable: true,
+            content_sampled: false,
+            metadata_only: false,
+            protected_reason: None,
+            warnings: vec![],
+            content: None,
+            context: None,
+            status: FileStatus::Analyzed,
+        });
+
+        let scan = ScanResult {
+            run_id: "test".to_string(),
+            timestamp: Utc::now(),
+            home_dir: "/home/user".to_string(),
+            dirs_scanned: vec!["~".to_string()],
+            files,
+            projects: vec![],
+            files_analyzed: 2,
+            files_ignored: 0,
+            files_error: 0,
+            total_size_bytes: 2048,
+            warnings: vec![],
+            full_home: true,
+        };
+
+        let options = PlanOptions::default();
+        let plan = generate_plan(&scan, &options);
+
+        // id_rsa não deve estar em propostas, mas sim em protected_files
+        assert_eq!(plan.proposals.len(), 1);
+        assert_eq!(plan.proposals[0].old_path, "/home/user/Downloads/test.pdf");
+        assert_eq!(plan.protected_files.len(), 1);
+        assert_eq!(plan.protected_files[0].path, "/home/user/.ssh/id_rsa");
+    }
 }

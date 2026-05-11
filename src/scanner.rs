@@ -38,6 +38,7 @@ pub struct ScanResult {
     pub files_error: usize,
     pub total_size_bytes: u64,
     pub warnings: Vec<String>,
+    pub full_home: bool,
 }
 
 /// Retorna o diretório de estado do Kryonix Home Brain.
@@ -66,10 +67,14 @@ fn generate_run_id() -> String {
 
 /// Executa o scan da Home do usuário.
 pub fn run_scan() -> Result<ScanResult> {
-    run_scan_options(false)
+    run_scan_options(false, false, false)
 }
 
-pub fn run_scan_options(full_home: bool) -> Result<ScanResult> {
+pub fn run_scan_options(
+    full_home: bool,
+    metadata_only_override: bool,
+    safe_content: bool,
+) -> Result<ScanResult> {
     let home = dirs::home_dir().context("Não foi possível determinar o diretório home")?;
     let run_id = generate_run_id();
     let timestamp = Utc::now();
@@ -81,7 +86,15 @@ pub fn run_scan_options(full_home: bool) -> Result<ScanResult> {
 
     if full_home {
         dirs_scanned.push("~".to_string());
-        walk_directory(&home, &mut files, &mut projects, &mut warnings, true);
+        walk_directory(
+            &home,
+            &mut files,
+            &mut projects,
+            &mut warnings,
+            true,
+            metadata_only_override,
+            safe_content,
+        );
     } else {
         for dir_name in SCAN_DIRS {
             let scan_path = home.join(dir_name);
@@ -90,7 +103,15 @@ pub fn run_scan_options(full_home: bool) -> Result<ScanResult> {
             }
             dirs_scanned.push(dir_name.to_string());
 
-            walk_directory(&scan_path, &mut files, &mut projects, &mut warnings, false);
+            walk_directory(
+                &scan_path,
+                &mut files,
+                &mut projects,
+                &mut warnings,
+                false,
+                metadata_only_override,
+                safe_content,
+            );
         }
     }
 
@@ -128,6 +149,7 @@ pub fn run_scan_options(full_home: bool) -> Result<ScanResult> {
         files_error,
         total_size_bytes,
         warnings,
+        full_home,
     })
 }
 
@@ -138,6 +160,8 @@ fn walk_directory(
     projects: &mut Vec<crate::project::ProjectCandidate>,
     warnings: &mut Vec<String>,
     full_home: bool,
+    metadata_only_override: bool,
+    safe_content: bool,
 ) {
     let walker = WalkDir::new(root)
         .follow_links(false)
@@ -257,17 +281,22 @@ fn walk_directory(
                 metadata_only: true,
                 protected_reason: Some("Ignored or secret file".to_string()),
                 warnings: vec!["Ignored or secret file".to_string()],
+                content: None,
+                context: None,
                 status: FileStatus::Ignored,
             });
             continue;
         }
 
-        if is_symlink {
-            files.push(metadata::collect(path, true));
-            continue;
+        let mut meta = metadata::collect(path, safe_content);
+
+        if metadata_only_override {
+            meta.metadata_only = true;
+            meta.content_sampled = false;
+            meta.protected_reason = Some("Forced metadata-only scan".to_string());
         }
 
-        files.push(metadata::collect(path, false));
+        files.push(meta);
     }
 }
 

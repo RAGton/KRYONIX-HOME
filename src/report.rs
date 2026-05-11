@@ -218,41 +218,57 @@ pub fn print_plan_dashboard(plan: &Plan) {
         }
     }
 
-    println!("\x1b[1m📋 Dashboard de Organização (Dry-Run)\x1b[0m");
-    println!("──────────────────────────────────────────────────────────");
-    println!("  Run ID:           {}", plan.run_id);
-    println!("  Arquivos vistos:  {}", plan.files_seen);
-    println!("  Projetos vistos:  {}", plan.projects_seen);
-    println!("──────────────────────────────────────────────────────────");
-    println!("  \x1b[32m✅ Ações Seguras:\x1b[0m      {}", safe_count);
-    println!("  \x1b[33m⚠️ Precisam de Revisão:\x1b[0m {}", review_count);
-    println!("  \x1b[31m❌ Conflitos/Risco:\x1b[0m    {}", conflict_count);
-    println!("──────────────────────────────────────────────────────────");
-    println!("  Projetos a mover:   {}", project_moves);
-    println!("  Arquivos a mover:   {}", file_moves);
-    println!("  Arquivos a renomear: {}", renames);
-    println!("──────────────────────────────────────────────────────────");
-    println!(
-        "  \x1b[1mTotal de Propostas:\x1b[0m  {}",
-        plan.proposals.len()
-    );
+    let mut modes = Vec::new();
+    if plan.full_home {
+        modes.push("full-home");
+    }
+    if plan.content_aware {
+        modes.push("content-aware");
+    }
+    if plan.context_aware {
+        modes.push("context-aware");
+    }
+    let modes_str = if modes.is_empty() {
+        "standard".to_string()
+    } else {
+        modes.join(" + ")
+    };
+
+    println!("\x1b[1m╭────────────────────────────────────────────────────────────╮\x1b[0m");
+    println!("\x1b[1m│ 🧊 Kryonix Home Plan                                       │\x1b[0m");
+    println!("\x1b[1m├────────────────────────────────────────────────────────────┤\x1b[0m");
+    println!("│ Home: {:<52} │", plan.home_dir);
+    println!("│ Modo: {:<52} │", modes_str);
+    println!("│ Arquivos vistos: {:<41} │", plan.files_seen);
+    println!("│ Projetos vistos: {:<41} │", plan.projects_seen);
+
     let downloads_count = plan
         .proposals
         .iter()
         .filter(|p| p.old_path.to_lowercase().contains("/downloads/"))
         .count();
-    if downloads_count > 0 {
-        println!("──────────────────────────────────────────────────────────");
-        println!(
-            "  \x1b[33m⚠️  Downloads pendentes de organização:\x1b[0m {}",
-            downloads_count
-        );
-        println!("     (Estes arquivos serão movidos para as categorias ou zona de revisão)");
-    }
+    println!("│ Downloads pendentes: {:<37} │", downloads_count);
+    println!("│ Revisão necessária: {:<38} │", review_count);
+    println!("│ Itens protegidos: {:<40} │", plan.protected_files.len());
+    println!("\x1b[1m╰────────────────────────────────────────────────────────────╯\x1b[0m");
+
+    println!();
+    println!("\x1b[1mResumo de Ações:\x1b[0m");
+    println!("  \x1b[32m✅ Ações Seguras:\x1b[0m      {}", safe_count);
+    println!("  \x1b[33m⚠️ Precisam de Revisão:\x1b[0m {}", review_count);
+    println!("  \x1b[31m❌ Conflitos/Risco:\x1b[0m    {}", conflict_count);
+    println!("  ──────────────────────────");
+    println!("  Projetos a mover:   {}", project_moves);
+    println!("  Arquivos a mover:   {}", file_moves);
+    println!("  Arquivos a renomear: {}", renames);
+    println!(
+        "  \x1b[1mTotal de Propostas:\x1b[0m  {}",
+        plan.proposals.len()
+    );
     println!();
 }
 
-/// Imprime o plano em formato legível.
+/// Imprime o plano em formato legível com tabela visual.
 pub fn print_plan(plan: &Plan) {
     print_plan_dashboard(plan);
 
@@ -261,43 +277,75 @@ pub fn print_plan(plan: &Plan) {
         return;
     }
 
-    println!("\x1b[1mTop 10 Propostas:\x1b[0m");
+    println!("\x1b[1mTabela de Organização (Top 15):\x1b[0m");
+    println!("────────────────────────────────────────────────────────────────────────────────────────────────────");
+    println!(
+        "\x1b[1m  {:<6} | {:<30} -> {:<30} | {}\x1b[0m",
+        "RISCO", "ORIGEM (DE ONDE ESTÁ)", "DESTINO (PARA ONDE VAI)", "MOTIVO"
+    );
+    println!("────────────────────────────────────────────────────────────────────────────────────────────────────");
 
-    for p in plan.proposals.iter().take(10) {
-        let review = if p.needs_review {
-            " [\x1b[33mREVISAR\x1b[0m]"
-        } else {
-            ""
-        };
-        let icon = match p.action.as_str() {
-            "move_project" => "📦",
-            "rename" => "📝",
-            _ => "📄",
-        };
-
+    for p in plan.proposals.iter().take(15) {
         let risk_color = match p.risk.as_str() {
-            "low" => "\x1b[32m",
-            "medium" => "\x1b[33m",
-            "high" => "\x1b[31m",
+            "low" => "\x1b[32m",    // Verde
+            "medium" => "\x1b[33m", // Amarelo
+            "high" => "\x1b[31m",   // Vermelho
             _ => "",
         };
 
+        let old_path = truncate_path(&p.old_path, 30);
+        let new_dir = truncate_path(&p.new_dir, 30);
+        let review_flag = if p.needs_review { " ⚠️" } else { "" };
+
         println!(
-            "  {} {risk_color}[{:>6}]\x1b[0m {} -> {}",
-            icon,
+            "  {risk_color}{:<6}\x1b[0m | {:<30} -> {:<30} | {}{}",
             p.risk.to_uppercase(),
-            p.old_path,
-            p.new_dir
+            old_path,
+            new_dir,
+            p.reason,
+            review_flag
         );
+
         if let Some(ref nf) = p.new_filename {
-            println!("     └─ Novo Nome: {}", nf);
+            println!("           | \x1b[2mRenomear para: {}\x1b[0m", nf);
         }
-        println!("     └─ Motivo: {}{review}", p.reason);
     }
 
-    if plan.proposals.len() > 10 {
+    println!("────────────────────────────────────────────────────────────────────────────────────────────────────");
+
+    if plan.proposals.len() > 15 {
         println!();
-        println!("  ... e mais {} propostas.", plan.proposals.len() - 10);
-        println!("  Use \x1b[1mkryonix home plan --why\x1b[0m para ver todos os detalhes.");
+        println!("  ... e mais {} propostas.", plan.proposals.len() - 15);
+        println!("  Use \x1b[1mkryonix home plan --limit 100\x1b[0m para ver mais detalhes.");
     }
+
+    if !plan.protected_files.is_empty() {
+        println!();
+        println!("\x1b[1m🛡️ Itens protegidos (metadata-only / sem ação):\x1b[0m");
+        println!("────────────────────────────────────────────────────────────────────────────────────────────────────");
+        for f in plan.protected_files.iter().take(10) {
+            let reason = f.protected_reason.as_deref().unwrap_or("Proteção padrão");
+            println!(
+                "  \x1b[2m{:<40} | {} | sem ação\x1b[0m",
+                truncate_path(&f.path, 40),
+                reason
+            );
+        }
+        if plan.protected_files.len() > 10 {
+            println!(
+                "  \x1b[2m... e outros {} itens protegidos.\x1b[0m",
+                plan.protected_files.len() - 10
+            );
+        }
+        println!("────────────────────────────────────────────────────────────────────────────────────────────────────");
+    }
+}
+
+/// Trunca o caminho para caber na tabela, preservando o final.
+fn truncate_path(path: &str, max_len: usize) -> String {
+    if path.len() <= max_len {
+        return path.to_string();
+    }
+    let half = (max_len - 3) / 2;
+    format!("{}...{}", &path[..half], &path[path.len() - half..])
 }

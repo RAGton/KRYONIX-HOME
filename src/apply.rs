@@ -58,6 +58,21 @@ pub fn run_apply(manifest: &mut Manifest, dry_run: bool) -> Result<()> {
         let source = Path::new(&action.source_path);
         let target = Path::new(&action.target_path);
 
+        // DEFESA EM PROFUNDIDADE: Bloquear qualquer ação em paths protegidos
+        if let Some(reason) = crate::metadata::is_protected_path(source) {
+            action.status = "blocked".to_string();
+            action.error_msg = Some(format!(
+                "Caminho protegido ({}): não pode ser movido",
+                reason
+            ));
+            failed += 1;
+            println!(
+                "❌ BLOQUEADO (Proteção): {} -> {}",
+                action.source_path, reason
+            );
+            continue;
+        }
+
         // Valida se origem existe
         if !source.exists() {
             action.status = "failed".to_string();

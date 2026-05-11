@@ -23,6 +23,8 @@ pub struct FileMetadata {
     pub metadata_only: bool,
     pub protected_reason: Option<String>,
     pub warnings: Vec<String>,
+    pub content: Option<crate::content::ContentProfile>,
+    pub context: Option<crate::context::ContextProfile>,
     pub status: FileStatus,
 }
 
@@ -148,7 +150,7 @@ pub fn is_protected_path(path: &Path) -> Option<String> {
 }
 
 /// Coleta metadados de um arquivo de forma segura.
-pub fn collect(path: &Path, is_symlink: bool) -> FileMetadata {
+pub fn collect(path: &Path, content_aware: bool) -> FileMetadata {
     let filename = path
         .file_name()
         .and_then(|n| n.to_str())
@@ -172,28 +174,30 @@ pub fn collect(path: &Path, is_symlink: bool) -> FileMetadata {
     let protected_reason = is_protected_path(path);
     let metadata_only = protected_reason.is_some();
 
-    let (size_bytes, modified_at, readable, is_dir, is_file) = match std::fs::symlink_metadata(path)
-    {
-        Ok(meta) => {
-            let mtime_str = meta
-                .modified()
-                .ok()
-                .map(|t| DateTime::<Utc>::from(t).to_rfc3339());
+    // Se o usuário pediu content_aware mas o path é protegido, mantemos metadata_only por segurança
+    let (size_bytes, modified_at, readable, is_dir, is_file, is_symlink) =
+        match std::fs::symlink_metadata(path) {
+            Ok(meta) => {
+                let mtime_str = meta
+                    .modified()
+                    .ok()
+                    .map(|t| DateTime::<Utc>::from(t).to_rfc3339());
 
-            let is_d = meta.is_dir();
-            let is_f = meta.is_file();
+                let is_d = meta.is_dir();
+                let is_f = meta.is_file();
+                let is_s = meta.file_type().is_symlink();
 
-            // Check readability
-            let readable = if is_f && !metadata_only {
-                std::fs::File::open(path).is_ok()
-            } else {
-                false
-            };
+                // Check readability
+                let readable = if is_f && !metadata_only {
+                    std::fs::File::open(path).is_ok()
+                } else {
+                    false
+                };
 
-            (meta.len(), mtime_str, readable, is_d, is_f)
-        }
-        Err(_) => (0, None, false, path.is_dir(), path.is_file()),
-    };
+                (meta.len(), mtime_str, readable, is_d, is_f, is_s)
+            }
+            Err(_) => (0, None, false, path.is_dir(), path.is_file(), false),
+        };
 
     let mut warnings = Vec::new();
     if metadata_only {
@@ -218,6 +222,21 @@ pub fn collect(path: &Path, is_symlink: bool) -> FileMetadata {
         current = p.parent();
     }
 
+    // Amostragem de conteúdo se solicitado e seguro
+    let content_sampled = content_aware && !metadata_only && readable && is_file && size_bytes > 0;
+
+    let content_profile = if content_sampled {
+        crate::content::analyze_file_content(path)
+    } else {
+        None
+    };
+
+    let context_profile = if content_aware && !is_dir {
+        Some(crate::context::analyze_file_context(path))
+    } else {
+        None
+    };
+
     FileMetadata {
         path: path.to_string_lossy().to_string(),
         filename,
@@ -233,10 +252,12 @@ pub fn collect(path: &Path, is_symlink: bool) -> FileMetadata {
         project_root,
         source_zone,
         readable,
-        content_sampled: false,
+        content_sampled,
         metadata_only,
         protected_reason,
         warnings,
+        content: content_profile,
+        context: context_profile,
         status: if is_symlink {
             FileStatus::Ignored
         } else {

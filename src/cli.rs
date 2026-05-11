@@ -55,6 +55,14 @@ enum Commands {
         /// Realiza um scan completo de toda a Home, com proteção contra vazamento
         #[arg(long, default_value_t = false)]
         full_home: bool,
+
+        /// Coleta apenas metadados básicos, sem tentar ler conteúdo para hash ou análise
+        #[arg(long, default_value_t = false)]
+        metadata_only: bool,
+
+        /// Lê apenas conteúdo de arquivos considerados seguros e pequenos
+        #[arg(long, default_value_t = false)]
+        safe_content: bool,
     },
     /// Mostra relatório do último scan
     Report,
@@ -93,6 +101,14 @@ enum Commands {
         /// Força a saída no formato puramente JSON
         #[arg(long, default_value_t = false)]
         json: bool,
+
+        /// Realiza análise sensível ao conteúdo durante o diagnóstico
+        #[arg(long, default_value_t = false)]
+        content_aware: bool,
+
+        /// Utiliza o Ollama Advisor para o diagnóstico
+        #[arg(long, default_value_t = false)]
+        ollama: bool,
     },
     /// Gera plano de organização (dry-run por padrão)
     Plan {
@@ -151,6 +167,14 @@ enum Commands {
         /// Utiliza o Ollama Advisor para classificação de taxonomia
         #[arg(long, default_value_t = false)]
         ollama: bool,
+
+        /// Realiza o planejamento considerando o conteúdo dos arquivos
+        #[arg(long, default_value_t = false)]
+        content_aware: bool,
+
+        /// Realiza o planejamento considerando o contexto do projeto
+        #[arg(long, default_value_t = false)]
+        context_aware: bool,
     },
     /// Gerencia os manifestos de ações
     Manifest {
@@ -194,8 +218,12 @@ pub fn run() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Scan { full_home } => {
-            let scan = scanner::run_scan_options(full_home)?;
+        Commands::Scan {
+            full_home,
+            metadata_only,
+            safe_content,
+        } => {
+            let scan = scanner::run_scan_options(full_home, metadata_only, safe_content)?;
             scanner::save_scan(&scan)?;
             report::print_scan_summary(&scan);
             eprintln!("\nNenhuma alteração foi feita.");
@@ -282,10 +310,32 @@ pub fn run() -> Result<()> {
             }
             println!("=========================================");
         }
-        Commands::Diagnose { path, json } => {
-            let file_meta = crate::metadata::collect(Path::new(&path), false);
+        Commands::Diagnose {
+            path,
+            json,
+            content_aware,
+            ollama,
+        } => {
+            let file_meta = crate::metadata::collect(Path::new(&path), content_aware);
             let config = crate::taxonomy::load_taxonomy_config(None);
-            let cat = crate::taxonomy::suggest_category_config(&file_meta, &config);
+            let cat = if ollama {
+                let sug = crate::ollama::get_advisor_suggestion(&file_meta);
+                crate::taxonomy::TaxonomyCategory {
+                    id: sug.category_id.clone(),
+                    label: sug.category_id.clone(),
+                    relative_dir: std::path::PathBuf::from("Revisar"),
+                    confidence: sug.confidence,
+                    risk: "medium".to_string(),
+                    needs_review: true,
+                    reason: sug.reason,
+                    rules_applied: vec!["ollama_advisor".to_string()],
+                    matched_keywords: vec![],
+                    candidate_categories: None,
+                    already_organized: false,
+                }
+            } else {
+                crate::taxonomy::suggest_category_config(&file_meta, &config)
+            };
             let rename_sug = crate::naming::suggest_rename(&file_meta);
 
             if json {
@@ -405,10 +455,12 @@ pub fn run() -> Result<()> {
             why,
             full_home,
             ollama,
+            content_aware,
+            context_aware,
             dry_run: _,
         } => {
             let scan = if full_home {
-                scanner::run_scan_options(true)?
+                scanner::run_scan_options(true, false, true)?
             } else {
                 scanner::load_latest_scan()?
             };
@@ -422,6 +474,9 @@ pub fn run() -> Result<()> {
                 projects_only: only_projects,
                 limit,
                 ollama,
+                full_home,
+                content_aware,
+                context_aware,
             };
             let plan = planner::generate_plan(&scan, &options);
             if json {
@@ -471,6 +526,9 @@ pub fn run() -> Result<()> {
                     projects_only: false,
                     limit: None,
                     ollama,
+                    full_home: scan.full_home,
+                    content_aware: false, // Por enquanto não exposto no manifest create
+                    context_aware: false, // Por enquanto não exposto no manifest create
                 };
                 let plan = planner::generate_plan(&scan, &options);
                 manifest::create_manifest(&plan, &scan)?;

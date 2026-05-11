@@ -291,6 +291,8 @@ mod tests {
             metadata_only: false,
             protected_reason: None,
             warnings: vec![],
+            content: None,
+            context: None,
             status: crate::metadata::FileStatus::Analyzed,
         }
     }

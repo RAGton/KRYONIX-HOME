@@ -418,6 +418,16 @@ pub fn parse_taxonomy_toml(content: &str) -> TaxonomyConfig {
     config
 }
 
+pub fn find_category_by_keyword(keyword: &str) -> Option<CategoryConfig> {
+    let config = load_taxonomy_config(None);
+    let keyword_lower = keyword.to_lowercase();
+    config.categories.into_iter().find(|cat| {
+        cat.keywords
+            .iter()
+            .any(|k| k.to_lowercase() == keyword_lower)
+    })
+}
+
 pub fn load_taxonomy_config(specific_path: Option<&str>) -> TaxonomyConfig {
     let mut paths_to_try = Vec::new();
     if let Some(p) = specific_path {
@@ -455,13 +465,13 @@ pub fn suggest_category_config(file: &FileMetadata, config: &TaxonomyConfig) -> 
     let is_audio = file.mime.starts_with("audio/")
         || matches!(ext_lower.as_str(), "mp3" | "flac" | "ogg" | "wav");
 
-    let path = std::path::Path::new(&file.path);
+    let _path = std::path::Path::new(&file.path);
 
-    // 1. Coleta de Content-Aware metadata se aplicável
-    let content_profile = crate::content::analyze_file_content(path);
+    // 1. Usa Content-Aware metadata se disponível
+    let content_profile = &file.content;
 
-    // 2. Coleta de Context-Aware metadata
-    let context_profile = crate::context::analyze_file_context(path);
+    // 2. Usa Context-Aware metadata se disponível
+    let context_profile = &file.context;
 
     let mut best_score = 0.0_f32;
     let mut best_candidates: Vec<&CategoryConfig> = Vec::new();
@@ -514,9 +524,11 @@ pub fn suggest_category_config(file: &FileMetadata, config: &TaxonomyConfig) -> 
         }
 
         // Match por contexto de diretório (Context-Aware)
-        if context_profile.sibling_categories.contains(&def.id) {
-            score += 0.30;
-            matched.push("contexto_diretorio".to_string());
+        if let Some(ref ctx) = context_profile {
+            if ctx.sibling_categories.contains(&def.id) {
+                score += 0.30;
+                matched.push("contexto_diretorio".to_string());
+            }
         }
 
         // Penalidade por media vs doc
@@ -574,7 +586,9 @@ pub fn suggest_category_config(file: &FileMetadata, config: &TaxonomyConfig) -> 
                     || is_audio
                     || ext_lower.is_empty();
 
-            let is_inside_codebase = context_profile.is_inside_codebase;
+            let is_inside_codebase = context_profile
+                .as_ref()
+                .map_or(false, |ctx| ctx.is_inside_codebase);
 
             let needs_review = if is_restricted_format || is_inside_codebase {
                 true
@@ -658,7 +672,10 @@ pub fn suggest_category_config(file: &FileMetadata, config: &TaxonomyConfig) -> 
         ("Documentos/00_Inbox/Revisar", "Inbox / Revisão Geral")
     };
 
-    let risk = if ext_lower.is_empty() || context_profile.is_inside_codebase {
+    let is_inside_codebase = context_profile
+        .as_ref()
+        .map_or(false, |ctx| ctx.is_inside_codebase);
+    let risk = if ext_lower.is_empty() || is_inside_codebase {
         "high"
     } else {
         "medium"
@@ -704,6 +721,8 @@ mod tests {
             metadata_only: false,
             protected_reason: None,
             warnings: vec![],
+            content: None,
+            context: None,
             status: FileStatus::Analyzed,
         }
     }

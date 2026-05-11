@@ -167,6 +167,9 @@ pub fn export_memory(from_source: &str, jsonl_stdout: bool, dry_run: bool) -> Re
                 projects_only: false,
                 limit: None,
                 ollama: false,
+                full_home: scan.full_home,
+                content_aware: false,
+                context_aware: false,
             };
             let plan = planner::generate_plan(&scan, &options);
 
