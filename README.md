@@ -76,3 +76,11 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all
 cargo build
 ```
+
+## Licença
+
+Este submódulo é parte integrante do ecossistema Kryonix e é distribuído como **Source Available / Proprietário — Todos os Direitos Reservados**.
+
+O código está disponível para leitura, auditoria pessoal, estudo e avaliação, mas **não** é permitido copiar, redistribuir, sublicenciar, vender, publicar derivados ou criar produtos comerciais baseados neste software sem autorização explícita por escrito de Gabriel Aguiar Rocha.
+
+Versões antigas que foram publicadas com outra licença permanecem regidas pela licença que acompanhava aquelas versões.

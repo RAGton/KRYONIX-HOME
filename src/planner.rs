@@ -1059,9 +1059,12 @@ mod tests {
 
         assert!(!plan.proposals.is_empty());
         let proposal = &plan.proposals[0];
-        
+
         // Com score baixo (ex: sem evidências extras suficientes), ele deve ser NeedsHumanReview, nunca AutoMoveCertified
-        assert_ne!(proposal.decision_class, crate::decision::DecisionClass::AutoMoveCertified);
+        assert_ne!(
+            proposal.decision_class,
+            crate::decision::DecisionClass::AutoMoveCertified
+        );
         assert!(!proposal.auto_apply_allowed);
 
         // Mesmo se criarmos um item com confiança exatamente 0.62 de risco baixo e definirmos min_confidence = 0.50,
@@ -1101,9 +1104,12 @@ mod tests {
 
         assert!(!plan.proposals.is_empty());
         let proposal = &plan.proposals[0];
-        
+
         // Destino incerto (como contendo "revisar") nunca deve ser AutoMoveCertified
-        assert_ne!(proposal.decision_class, crate::decision::DecisionClass::AutoMoveCertified);
+        assert_ne!(
+            proposal.decision_class,
+            crate::decision::DecisionClass::AutoMoveCertified
+        );
         assert!(!proposal.auto_apply_allowed);
     }
 }

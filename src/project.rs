@@ -139,7 +139,8 @@ pub fn get_project_evidence(_path: &Path, name: &str, markers: &[String]) -> Pro
     }
 
     let name_lower = name.to_lowercase();
-    if (name_lower.contains("aulas") || name_lower.contains("estudos")) && strong_markers.is_empty() {
+    if (name_lower.contains("aulas") || name_lower.contains("estudos")) && strong_markers.is_empty()
+    {
         confidence = 0.2;
         warnings.push("Pasta de estudos sem marcadores fortes de código".to_string());
     }

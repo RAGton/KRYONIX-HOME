@@ -3,6 +3,7 @@ name = "kryonix-home"
 version = "0.1.0"
 edition = "2021"
 description = "Kryonix Home Brain — scanner determinístico e organizador seguro da Home"
+license-file = "LICENSE"
 
 [dependencies]
 anyhow = "1"

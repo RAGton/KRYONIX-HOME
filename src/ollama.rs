@@ -92,7 +92,10 @@ Não insira nenhuma explicação adicional fora do JSON."#;
             let response: ureq::Response = response;
             if let Ok(json_val) = response.into_json::<serde_json::Value>() {
                 let json_val: serde_json::Value = json_val;
-                if let Some(resp_text) = json_val.get("response").and_then(|r: &serde_json::Value| r.as_str()) {
+                if let Some(resp_text) = json_val
+                    .get("response")
+                    .and_then(|r: &serde_json::Value| r.as_str())
+                {
                     if let Ok(suggestion) = serde_json::from_str::<OllamaSuggestion>(resp_text) {
                         return suggestion;
                     }

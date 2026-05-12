@@ -157,7 +157,9 @@ fn save_manifest_state(manifest: &Manifest) -> Result<()> {
     let dir = crate::manifest::manifests_dir()?;
     let mut entries = fs::read_dir(&dir)?
         .filter_map(Result::ok)
-        .filter(|e: &fs::DirEntry| e.path().is_file() && e.path().extension().is_some_and(|ext| ext == "json"))
+        .filter(|e: &fs::DirEntry| {
+            e.path().is_file() && e.path().extension().is_some_and(|ext| ext == "json")
+        })
         .collect::<Vec<_>>();
     entries.sort_by_key(|e: &fs::DirEntry| e.path());
 

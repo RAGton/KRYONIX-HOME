@@ -63,7 +63,9 @@ pub fn run_clean(old_schema: bool) -> Result<()> {
     if manifests_dir.exists() {
         let entries = fs::read_dir(&manifests_dir)?
             .filter_map(Result::ok)
-            .filter(|e: &fs::DirEntry| e.path().is_file() && e.path().extension().is_some_and(|ext| ext == "json"))
+            .filter(|e: &fs::DirEntry| {
+                e.path().is_file() && e.path().extension().is_some_and(|ext| ext == "json")
+            })
             .collect::<Vec<_>>();
 
         let mut cleaned_count = 0;

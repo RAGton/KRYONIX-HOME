@@ -79,8 +79,8 @@ pub fn run_apply(manifest: &mut Manifest, dry_run: bool) -> Result<()> {
         // - auto_apply_allowed deve ser true
         // - blocked_from_apply deve ser false
         // - risk deve ser "low"
-        if action.blocked_from_apply 
-            || !action.auto_apply_allowed 
+        if action.blocked_from_apply
+            || !action.auto_apply_allowed
             || action.decision_class != "AutoMoveCertified"
             || action.risk != "low"
         {

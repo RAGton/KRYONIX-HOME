@@ -270,7 +270,6 @@ pub fn suggest_rename(file: &FileMetadata) -> Option<RenameSuggestion> {
 mod tests {
     use super::*;
 
-
     fn dummy_file(name: &str, ext: &str) -> FileMetadata {
         FileMetadata {
             path: format!("/tmp/{}", name),

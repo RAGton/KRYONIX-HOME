@@ -215,7 +215,9 @@ pub fn run_autopilot(
 
         // Se a confiança calculada for menor que o limite mínimo de segurança do autopilot (mínimo absoluto 0.95), rebaixar incondicionalmente
         if proposal.decision_class == DecisionClass::AutoMoveCertified
-            && (proposal.confidence < 0.95 || proposal.confidence < config.min_confidence || proposal.risk != "low")
+            && (proposal.confidence < 0.95
+                || proposal.confidence < config.min_confidence
+                || proposal.risk != "low")
         {
             proposal.decision_class = DecisionClass::NeedsHumanReview;
             proposal.auto_apply_allowed = false;
