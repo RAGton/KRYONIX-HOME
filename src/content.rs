@@ -10,9 +10,13 @@ pub struct ContentProfile {
     pub path: String,
     pub content_read: bool,
     pub extractor: String,
+    pub extraction_method: String,
     pub content_kind: String,
+    pub safe_to_read: bool,
     pub sample_text: Option<String>,
+    pub summary: Option<String>,
     pub keywords: Vec<String>,
+    pub imports: Vec<String>,
     pub title_candidates: Vec<String>,
     pub warnings: Vec<String>,
     pub truncated: bool,
@@ -37,9 +41,13 @@ pub fn analyze_content_safe(path: &Path, limit_bytes: u64) -> Result<ContentProf
         path: path_str,
         content_read: false,
         extractor: "none".to_string(),
+        extraction_method: "none".to_string(),
         content_kind: "unknown".to_string(),
+        safe_to_read: true,
         sample_text: None,
+        summary: None,
         keywords: Vec::new(),
+        imports: Vec::new(),
         title_candidates: Vec::new(),
         warnings: Vec::new(),
         truncated: false,
@@ -73,11 +81,15 @@ pub fn analyze_content_safe(path: &Path, limit_bytes: u64) -> Result<ContentProf
         "model",
         "train",
         "dataset",
+        "nf",
+        "nfe",
+        "danfe",
+        "nota fiscal",
     ];
 
     match ext.as_str() {
         "txt" | "md" | "tex" | "csv" | "json" | "yaml" | "yml" | "toml" | "nix" | "py" | "rs"
-        | "sh" | "go" | "js" | "ts" | "html" | "css" => {
+        | "sh" | "go" | "js" | "ts" | "html" | "css" | "xml" => {
             let file = File::open(path)?;
             let size = file.metadata()?.len();
             let to_read = std::cmp::min(size, limit_bytes);
@@ -89,9 +101,25 @@ pub fn analyze_content_safe(path: &Path, limit_bytes: u64) -> Result<ContentProf
                 Ok(bytes) => {
                     profile.content_read = true;
                     profile.extractor = "text_reader".to_string();
+                    profile.extraction_method = "text_reader".to_string();
                     profile.content_kind = "text/plain".to_string();
                     profile.bytes_read = bytes as u64;
                     profile.truncated = size > to_read;
+
+                    // Detectar vazamento de secrets/sensitive data
+                    let content_upper = content.to_uppercase();
+                    if content_upper.contains("PRIVATE KEY")
+                        || content_upper.contains("TOKEN")
+                        || content_upper.contains("SECRET_KEY")
+                        || content_upper.contains("PASSWORD")
+                    {
+                        profile.safe_to_read = false;
+                        profile.warnings.push("Sensitive information signature detected. Content redacted for safety.".to_string());
+                        profile.sample_text = Some("[REDACTED - SENSITIVE]".to_string());
+                        profile.summary = Some("[REDACTED - SENSITIVE]".to_string());
+                        profile.keywords = vec!["sensitive".to_string()];
+                        return Ok(profile);
+                    }
 
                     let mut matched_keywords = Vec::new();
                     let content_lower = content.to_lowercase();
@@ -101,6 +129,29 @@ pub fn analyze_content_safe(path: &Path, limit_bytes: u64) -> Result<ContentProf
                         }
                     }
                     profile.keywords = matched_keywords;
+
+                    // Parse imports
+                    let mut detected_imports = Vec::new();
+                    for line in content.lines() {
+                        let trimmed = line.trim();
+                        if ext == "py"
+                            && (trimmed.starts_with("import ") || trimmed.starts_with("from "))
+                        {
+                            detected_imports.push(trimmed.to_string());
+                        } else if ext == "rs" && trimmed.starts_with("use ") {
+                            detected_imports.push(trimmed.to_string());
+                        } else if ext == "nix"
+                            && (trimmed.contains("import") || trimmed.contains("inputs"))
+                        {
+                            detected_imports.push(trimmed.to_string());
+                        } else if (ext == "js" || ext == "ts")
+                            && (trimmed.contains("import ") || trimmed.contains("require("))
+                        {
+                            detected_imports.push(trimmed.to_string());
+                        }
+                    }
+                    detected_imports.truncate(10);
+                    profile.imports = detected_imports;
 
                     // Title candidates
                     let mut titles = Vec::new();
@@ -137,6 +188,7 @@ pub fn analyze_content_safe(path: &Path, limit_bytes: u64) -> Result<ContentProf
                     } else {
                         Some(clean_content)
                     };
+                    profile.summary = profile.sample_text.clone();
                 }
                 Err(e) => {
                     profile
@@ -153,6 +205,7 @@ pub fn analyze_content_safe(path: &Path, limit_bytes: u64) -> Result<ContentProf
             if let Ok(v) = serde_json::from_reader::<_, serde_json::Value>(reader) {
                 profile.content_read = true;
                 profile.extractor = "ipynb_json_parser".to_string();
+                profile.extraction_method = "ipynb_json_parser".to_string();
                 profile.content_kind = "notebook".to_string();
                 profile.bytes_read = std::cmp::min(size, limit_bytes);
 
@@ -173,6 +226,20 @@ pub fn analyze_content_safe(path: &Path, limit_bytes: u64) -> Result<ContentProf
                             } else {
                                 String::new()
                             };
+
+                            let text_upper = text.to_uppercase();
+                            if text_upper.contains("PRIVATE KEY")
+                                || text_upper.contains("TOKEN")
+                                || text_upper.contains("SECRET_KEY")
+                                || text_upper.contains("PASSWORD")
+                            {
+                                profile.safe_to_read = false;
+                                profile.warnings.push("Sensitive information signature detected in cell. Content redacted for safety.".to_string());
+                                profile.sample_text = Some("[REDACTED - SENSITIVE]".to_string());
+                                profile.summary = Some("[REDACTED - SENSITIVE]".to_string());
+                                profile.keywords = vec!["sensitive".to_string()];
+                                return Ok(profile);
+                            }
 
                             let text_lower = text.to_lowercase();
                             for kw in keywords_to_match {
@@ -210,6 +277,7 @@ pub fn analyze_content_safe(path: &Path, limit_bytes: u64) -> Result<ContentProf
                     } else {
                         Some(joined)
                     };
+                    profile.summary = profile.sample_text.clone();
                 }
             } else {
                 profile
@@ -231,6 +299,7 @@ pub fn analyze_content_safe(path: &Path, limit_bytes: u64) -> Result<ContentProf
                     if let Ok(content) = String::from_utf8(output.stdout) {
                         profile.content_read = true;
                         profile.extractor = "pdftotext_cli".to_string();
+                        profile.extraction_method = "pdftotext_cli".to_string();
                         profile.content_kind = "pdf".to_string();
                         profile.bytes_read = std::cmp::min(content.len() as u64, size_limit);
                         profile.truncated = content.len() as u64 > size_limit;
@@ -243,6 +312,20 @@ pub fn analyze_content_safe(path: &Path, limit_bytes: u64) -> Result<ContentProf
                         } else {
                             content.clone()
                         };
+
+                        let content_upper = content_to_analyze.to_uppercase();
+                        if content_upper.contains("PRIVATE KEY")
+                            || content_upper.contains("TOKEN")
+                            || content_upper.contains("SECRET_KEY")
+                            || content_upper.contains("PASSWORD")
+                        {
+                            profile.safe_to_read = false;
+                            profile.warnings.push("Sensitive information signature detected in PDF. Content redacted for safety.".to_string());
+                            profile.sample_text = Some("[REDACTED - SENSITIVE]".to_string());
+                            profile.summary = Some("[REDACTED - SENSITIVE]".to_string());
+                            profile.keywords = vec!["sensitive".to_string()];
+                            return Ok(profile);
+                        }
 
                         let content_lower = content_to_analyze.to_lowercase();
                         let mut matched_keywords = Vec::new();
@@ -273,6 +356,7 @@ pub fn analyze_content_safe(path: &Path, limit_bytes: u64) -> Result<ContentProf
                         } else {
                             Some(clean_content)
                         };
+                        profile.summary = profile.sample_text.clone();
                     } else {
                         profile
                             .warnings

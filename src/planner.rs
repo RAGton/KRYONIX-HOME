@@ -1,4 +1,3 @@
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -30,11 +29,13 @@ pub struct PlanProposal {
     #[serde(default = "default_zero_f64")]
     pub confidence: f64,
     pub old_path: String,
+    pub source: String,
     pub new_dir: String,
+    pub destination: String,
     #[serde(default)]
     pub reason: String,
     #[serde(default)]
-    pub evidence: String,
+    pub evidence: Vec<String>,
     #[serde(default = "default_true")]
     pub needs_review: bool,
     #[serde(default)]
@@ -73,6 +74,23 @@ pub struct PlanProposal {
     pub project_file_count: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project_total_size: Option<u64>,
+
+    // Autopilot fields
+    pub decision_class: crate::decision::DecisionClass,
+    pub auto_apply_allowed: bool,
+    pub blocked_from_apply: bool,
+    pub staging_only: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confidence_breakdown: Option<crate::decision::ConfidenceBreakdown>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_profile: Option<crate::content::ContentProfile>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_profile: Option<crate::context::ContextProfile>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_evidence: Option<crate::project::ProjectEvidence>,
+    pub safety_flags: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rollback_hint: Option<String>,
 }
 
 /// Plano completo de organização (dry-run).
@@ -113,6 +131,7 @@ pub struct PlanOptions<'a> {
     pub full_home: bool,
     pub content_aware: bool,
     pub context_aware: bool,
+    pub min_confidence: Option<f64>,
 }
 
 /// Gera um plano de organização determinístico baseado em MIME/extensão e, opcionalmente, sugere renomeações.
@@ -160,9 +179,14 @@ pub fn generate_plan(scan: &ScanResult, options: &PlanOptions) -> Plan {
             risk: project.risk.clone(),
             confidence: 0.95,
             old_path: project.root_path.clone(),
+            source: project.root_path.clone(),
             new_dir: String::new(), // Será preenchido abaixo
+            destination: String::new(),
             reason: project.reason.clone(),
-            evidence: format!("Marcadores detectados: {}", project.markers.join(", ")),
+            evidence: vec![format!(
+                "Marcadores detectados: {}",
+                project.markers.join(", ")
+            )],
             needs_review: project.needs_review || project.root_path.contains("Obsidian Vault"),
             protected: false,
             new_filename: None,
@@ -181,6 +205,17 @@ pub fn generate_plan(scan: &ScanResult, options: &PlanOptions) -> Plan {
             project_markers: Some(project.markers.clone()),
             project_file_count: Some(project.file_count),
             project_total_size: Some(project.total_size_bytes),
+            // Autopilot fields defaults
+            decision_class: crate::decision::DecisionClass::NeedsHumanReview,
+            auto_apply_allowed: false,
+            blocked_from_apply: false,
+            staging_only: false,
+            confidence_breakdown: None,
+            content_profile: None,
+            context_profile: None,
+            project_evidence: None,
+            safety_flags: vec![],
+            rollback_hint: None,
         };
 
         // Classificar projeto pela taxonomia baseada no ID
@@ -202,6 +237,15 @@ pub fn generate_plan(scan: &ScanResult, options: &PlanOptions) -> Plan {
                 proposal.category_label = Some("Sandbox".to_string());
             }
         }
+
+        // Run autopilot evaluation & enrichment
+        enrich_and_classify_proposal(
+            &mut proposal,
+            None,
+            Some(project),
+            &scan.home_dir,
+            Some(options),
+        );
 
         // Verifica se já está organizado
         let expected_dir_path = Path::new(&scan.home_dir).join(&proposal.new_dir);
@@ -277,9 +321,14 @@ pub fn generate_plan(scan: &ScanResult, options: &PlanOptions) -> Plan {
                     risk: cat.risk.clone(),
                     confidence: cat.confidence as f64,
                     old_path: file.path.clone(),
+                    source: file.path.clone(),
                     new_dir: cat.relative_dir.to_string_lossy().to_string(),
+                    destination: String::new(),
                     reason: cat.reason.clone(),
-                    evidence: format!("Extensão: {} | MIME: {}", file.extension, file.mime),
+                    evidence: vec![format!(
+                        "Extensão: {} | MIME: {}",
+                        file.extension, file.mime
+                    )],
                     needs_review: cat.needs_review || file.path.contains("Obsidian Vault"),
                     protected: false,
                     new_filename: None,
@@ -298,6 +347,17 @@ pub fn generate_plan(scan: &ScanResult, options: &PlanOptions) -> Plan {
                     project_markers: None,
                     project_file_count: None,
                     project_total_size: None,
+                    // Autopilot fields defaults
+                    decision_class: crate::decision::DecisionClass::NeedsHumanReview,
+                    auto_apply_allowed: false,
+                    blocked_from_apply: false,
+                    staging_only: false,
+                    confidence_breakdown: None,
+                    content_profile: None,
+                    context_profile: None,
+                    project_evidence: None,
+                    safety_flags: vec![],
+                    rollback_hint: None,
                 }
             } else {
                 match classify_file(file) {
@@ -345,8 +405,19 @@ pub fn generate_plan(scan: &ScanResult, options: &PlanOptions) -> Plan {
                 continue;
             }
 
+            // Run autopilot evaluation & enrichment
+            enrich_and_classify_proposal(
+                &mut proposal,
+                Some(file),
+                None,
+                &scan.home_dir,
+                Some(options),
+            );
+
             // Aplicar filtros
-            if options.safe_only && (proposal.risk == "high" || proposal.needs_review) {
+            if options.safe_only
+                && (proposal.risk == "high" || proposal.needs_review || proposal.blocked_from_apply)
+            {
                 continue;
             }
             if options.review_only && !proposal.needs_review {
@@ -488,9 +559,14 @@ fn classify_file(file: &FileMetadata) -> Option<PlanProposal> {
         },
         confidence,
         old_path: file.path.clone(),
+        source: file.path.clone(),
         new_dir: new_dir.to_string(),
+        destination: String::new(),
         reason: reason.to_string(),
-        evidence: format!("Extensão: {} | MIME: {}", file.extension, file.mime),
+        evidence: vec![format!(
+            "Extensão: {} | MIME: {}",
+            file.extension, file.mime
+        )],
         needs_review: confidence < 0.70 || file.path.contains("Obsidian Vault"),
         protected: false,
         new_filename: None,
@@ -509,7 +585,296 @@ fn classify_file(file: &FileMetadata) -> Option<PlanProposal> {
         project_markers: None,
         project_file_count: None,
         project_total_size: None,
+        // Autopilot fields defaults
+        decision_class: crate::decision::DecisionClass::NeedsHumanReview,
+        auto_apply_allowed: false,
+        blocked_from_apply: false,
+        staging_only: false,
+        confidence_breakdown: None,
+        content_profile: None,
+        context_profile: None,
+        project_evidence: None,
+        safety_flags: vec![],
+        rollback_hint: None,
     })
+}
+
+pub fn enrich_and_classify_proposal(
+    proposal: &mut PlanProposal,
+    file_meta: Option<&FileMetadata>,
+    project_candidate: Option<&crate::project::ProjectCandidate>,
+    home_dir: &str,
+    options: Option<&PlanOptions>,
+) {
+    let old_path = proposal.old_path.clone();
+    let new_dir = proposal.new_dir.clone();
+
+    // Fill dual compatible fields
+    proposal.source = old_path.clone();
+    proposal.destination = if let Some(ref name) = proposal.new_filename {
+        Path::new(home_dir)
+            .join(&new_dir)
+            .join(name)
+            .to_string_lossy()
+            .to_string()
+    } else {
+        let name = Path::new(&old_path).file_name().unwrap_or_default();
+        Path::new(home_dir)
+            .join(&new_dir)
+            .join(name)
+            .to_string_lossy()
+            .to_string()
+    };
+
+    let path_buf = Path::new(&old_path);
+
+    // Safety flags
+    let mut safety_flags = Vec::new();
+
+    // Let's analyze safety markers first
+    let is_protected = crate::metadata::is_protected_path(path_buf).is_some();
+    if is_protected {
+        safety_flags.push("protected_path".to_string());
+    }
+
+    let is_hidden = crate::metadata::is_hidden_path(path_buf);
+    if is_hidden {
+        safety_flags.push("hidden_file".to_string());
+    }
+
+    let ext_lower = path_buf
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    let is_script_or_exe = matches!(
+        ext_lower.as_str(),
+        "sh" | "ps1" | "exe" | "msi" | "bat" | "cmd" | "bin" | "run"
+    );
+    if is_script_or_exe {
+        safety_flags.push("script_or_executable".to_string());
+    }
+
+    let mut is_project = false;
+    let mut is_vault = false;
+
+    let mut content_profile = None;
+    let mut context_profile = None;
+    let mut project_evidence = None;
+
+    let mut folder_context_score = 0.0;
+    let mut content_score = 0.0;
+    let mut project_marker_score = 0.0;
+    let mut filename_score = 0.5;
+    let mut mime_score = 0.5;
+
+    // If we have file metadata
+    if let Some(file) = file_meta {
+        is_project = file.is_project_member;
+
+        if let Some(ref content) = file.content {
+            content_profile = Some(content.clone());
+            if !content.safe_to_read {
+                safety_flags.push("sensitive_content_redacted".to_string());
+            }
+            if !content.imports.is_empty() {
+                safety_flags.push("contains_code_imports".to_string());
+            }
+            // Scoring content:
+            if let Some(ref summary) = content.summary {
+                if summary.to_lowercase().contains("import") {
+                    content_score += 0.2;
+                }
+            }
+            if !content.keywords.is_empty() {
+                content_score += 0.3;
+            }
+        }
+
+        if let Some(ref context) = file.context {
+            context_profile = Some(context.clone());
+            if let Some(ref fc) = context.folder_context {
+                is_vault = fc.is_vault;
+
+                // Sibling matching score:
+                if let Some(ref dom_cat) = fc.dominant_category {
+                    if let Some(ref prop_cat) = proposal.category_id {
+                        if dom_cat.split('.').next() == prop_cat.split('.').next() {
+                            folder_context_score += 0.3;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // If it's a project proposal
+    if let Some(project) = project_candidate {
+        is_project = true;
+        is_vault = project.category_id == "conhecimento.vault";
+
+        let mut strong = Vec::new();
+        let mut weak = Vec::new();
+        for m in &project.markers {
+            if crate::project::STRONG_PROJECT_MARKERS.contains(&m.as_str()) {
+                strong.push(m.clone());
+            } else {
+                weak.push(m.clone());
+            }
+        }
+
+        project_evidence = Some(crate::project::ProjectEvidence {
+            is_project: true,
+            confidence: 0.95,
+            strong_markers: strong,
+            weak_markers: weak,
+            project_kind: project.category_id.clone(),
+            warnings: project.warnings.clone(),
+            reason: project.reason.clone(),
+        });
+        project_marker_score = 0.4;
+    } else if let Some(file) = file_meta {
+        // Evaluate project root detection if not already marked as candidate
+        if file.is_dir {
+            if let Some(markers) = crate::project::detect_project_root(path_buf) {
+                let name = path_buf
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
+                let evidence = crate::project::get_project_evidence(path_buf, &name, &markers);
+                is_project = evidence.is_project;
+                project_evidence = Some(evidence);
+                project_marker_score = 0.3;
+            }
+        }
+    }
+
+    // If destination contains "revisar", "baixa_confianca", "conflitos", or category is "incerto"
+    let is_uncertain_destination = new_dir.to_lowercase().contains("revisar")
+        || new_dir.to_lowercase().contains("baixa_confianca")
+        || new_dir.to_lowercase().contains("conflitos")
+        || proposal.category_id.as_deref().unwrap_or("") == "incerto";
+
+    // Overwrite check (strictly unsafe for autopilot)
+    let dest_path = Path::new(&proposal.destination);
+    let is_overwrite = dest_path.exists();
+    if is_overwrite {
+        safety_flags.push("overwrite_target_exists".to_string());
+    }
+
+    // Calculate filename and mime scores
+    let filename_lower = path_buf
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_lowercase();
+    if let Some(ref cat_id) = proposal.category_id {
+        let cat_part = cat_id.split('.').last().unwrap_or("");
+        if filename_lower.contains(cat_part) {
+            filename_score += 0.25;
+        }
+    }
+    if let Some(file) = file_meta {
+        if file.mime.starts_with("image")
+            || file.mime.starts_with("video")
+            || file.mime.starts_with("audio")
+        {
+            mime_score += 0.3;
+        }
+    }
+
+    // Compound score calculation
+    let mut final_score = (proposal.confidence * 0.4)
+        + (filename_score * 0.15)
+        + (mime_score * 0.15)
+        + (folder_context_score * 0.15)
+        + (content_score * 0.1)
+        + (project_marker_score * 0.05);
+
+    if final_score > 1.0 {
+        final_score = 1.0;
+    } else if final_score < 0.0 {
+        final_score = 0.0;
+    }
+
+    proposal.confidence = final_score;
+
+    let confidence_breakdown = crate::decision::ConfidenceBreakdown {
+        filename_score,
+        mime_score,
+        folder_context_score,
+        content_score,
+        project_marker_score,
+        final_score,
+    };
+    proposal.confidence_breakdown = Some(confidence_breakdown);
+
+    // Multi-source evidence check: at least 2 non-zero scores (e.g. filename_score > 0.5, folder_context_score > 0.0, content_score > 0.0, mime_score > 0.5)
+    let mut evidence_sources = 0;
+    if filename_score > 0.5 {
+        evidence_sources += 1;
+    }
+    if mime_score > 0.5 {
+        evidence_sources += 1;
+    }
+    if folder_context_score > 0.0 {
+        evidence_sources += 1;
+    }
+    if content_score > 0.0 {
+        evidence_sources += 1;
+    }
+    if project_marker_score > 0.0 {
+        evidence_sources += 1;
+    }
+
+    let has_multisource = evidence_sources >= 2;
+
+    // Categorize DecisionClass
+    let decision_class;
+    let blocked_from_apply;
+    let auto_apply_allowed;
+    let staging_only = false;
+
+    // Core Autopilot Decision Logic
+    if is_protected || is_project || is_vault || is_script_or_exe || is_overwrite {
+        decision_class = crate::decision::DecisionClass::BlockedUnsafe;
+        blocked_from_apply = true;
+        auto_apply_allowed = false;
+    } else if proposal.risk == "high" || is_uncertain_destination {
+        decision_class = crate::decision::DecisionClass::NeedsHumanReview;
+        blocked_from_apply = false;
+        auto_apply_allowed = false;
+    } else if proposal.risk == "low"
+        && final_score >= options.and_then(|o| o.min_confidence).unwrap_or(0.95)
+        && has_multisource
+    {
+        decision_class = crate::decision::DecisionClass::AutoMoveCertified;
+        blocked_from_apply = false;
+        auto_apply_allowed = true;
+    } else {
+        decision_class = crate::decision::DecisionClass::NeedsHumanReview;
+        blocked_from_apply = false;
+        auto_apply_allowed = false;
+    }
+
+    // Setup rollback hint
+    let rollback_hint = format!("mv \"{}\" \"{}\"", proposal.destination, proposal.source);
+
+    // Store back in proposal
+    proposal.decision_class = decision_class;
+    proposal.auto_apply_allowed = auto_apply_allowed;
+    proposal.blocked_from_apply = blocked_from_apply;
+    proposal.staging_only = staging_only;
+    proposal.content_profile = content_profile;
+    proposal.context_profile = context_profile;
+    proposal.project_evidence = project_evidence;
+    proposal.safety_flags = safety_flags;
+    proposal.rollback_hint = Some(rollback_hint);
+    proposal.evidence.push(format!(
+        "Multi-source components matched: {}",
+        evidence_sources
+    ));
 }
 
 /// Mascara paths protegidos para relatórios

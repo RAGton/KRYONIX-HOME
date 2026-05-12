@@ -16,6 +16,10 @@ fn default_schema_version() -> String {
     "1.0".to_string()
 }
 
+fn default_needs_human() -> String {
+    "NeedsHumanReview".to_string()
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ManifestAction {
     pub source_path: String,
@@ -59,6 +63,14 @@ pub struct ManifestAction {
     pub candidate_categories: Option<Vec<String>>,
     #[serde(default)]
     pub already_organized: bool,
+    #[serde(default = "default_needs_human")]
+    pub decision_class: String,
+    #[serde(default)]
+    pub auto_apply_allowed: bool,
+    #[serde(default)]
+    pub blocked_from_apply: bool,
+    #[serde(default)]
+    pub staging_only: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -188,6 +200,10 @@ pub fn create_manifest(plan: &Plan, scan: &ScanResult) -> Result<Manifest> {
                     taxonomy_profile: prop.taxonomy_profile.clone(),
                     candidate_categories: prop.candidate_categories.clone(),
                     already_organized: prop.already_organized,
+                    decision_class: format!("{:?}", prop.decision_class),
+                    auto_apply_allowed: prop.auto_apply_allowed,
+                    blocked_from_apply: prop.blocked_from_apply,
+                    staging_only: prop.staging_only,
                 });
             }
             continue;
@@ -238,6 +254,10 @@ pub fn create_manifest(plan: &Plan, scan: &ScanResult) -> Result<Manifest> {
                 taxonomy_profile: prop.taxonomy_profile.clone(),
                 candidate_categories: prop.candidate_categories.clone(),
                 already_organized: prop.already_organized,
+                decision_class: format!("{:?}", prop.decision_class),
+                auto_apply_allowed: prop.auto_apply_allowed,
+                blocked_from_apply: prop.blocked_from_apply,
+                staging_only: prop.staging_only,
             });
         }
     }
@@ -388,6 +408,10 @@ mod tests {
                 taxonomy_profile: None,
                 candidate_categories: None,
                 already_organized: false,
+                decision_class: "AutoMoveCertified".to_string(),
+                auto_apply_allowed: true,
+                blocked_from_apply: false,
+                staging_only: false,
             }],
             protected_count: 5,
         };

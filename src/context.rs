@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FolderContext {
@@ -11,12 +11,21 @@ pub struct FolderContext {
     pub neighbor_extensions: Vec<String>,
     pub neighbor_keywords: Vec<String>,
     pub warnings: Vec<String>,
+    // Novas propriedades solicitadas:
+    pub folder_signals: Vec<String>,
+    pub dominant_category: Option<String>,
+    pub is_project: bool,
+    pub is_vault: bool,
+    pub is_inbox: bool,
+    pub is_review_bucket: bool,
+    pub is_staging: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContextProfile {
     pub is_inside_codebase: bool,
     pub sibling_categories: Vec<String>,
+    pub folder_context: Option<FolderContext>,
 }
 
 pub fn analyze_folder_context(folder_path: &Path) -> FolderContext {
@@ -109,6 +118,31 @@ pub fn analyze_folder_context(folder_path: &Path) -> FolderContext {
     dominant_categories.sort();
     dominant_categories.dedup();
 
+    let mut folder_signals = Vec::new();
+    for ext in &neighbor_extensions {
+        folder_signals.push(format!("ext:{}", ext));
+    }
+    for kw in &neighbor_keywords {
+        folder_signals.push(format!("kw:{}", kw));
+    }
+    for marker in &project_markers {
+        folder_signals.push(format!("marker:{}", marker));
+    }
+
+    let dominant_category = dominant_categories.first().cloned();
+    let is_project = folder_kind == "project";
+    let is_vault = folder_kind == "vault"
+        || folder_name.to_lowercase().contains(".obsidian")
+        || folder_path_str.to_lowercase().contains("obsidian vault");
+    let is_inbox = folder_kind == "downloads"
+        || folder_name.to_lowercase().contains("inbox")
+        || folder_name.to_lowercase().contains("downloads");
+    let is_review_bucket = folder_name.to_lowercase().contains("revisar")
+        || folder_name.to_lowercase().contains("baixa_confianca")
+        || folder_name.to_lowercase().contains("conflitos");
+    let is_staging = folder_name.to_lowercase().contains("staging")
+        || folder_name.to_lowercase().contains("00_inbox");
+
     FolderContext {
         folder_path: folder_path_str,
         folder_name,
@@ -118,16 +152,28 @@ pub fn analyze_folder_context(folder_path: &Path) -> FolderContext {
         neighbor_extensions,
         neighbor_keywords,
         warnings,
+        folder_signals,
+        dominant_category,
+        is_project,
+        is_vault,
+        is_inbox,
+        is_review_bucket,
+        is_staging,
     }
 }
 
 pub fn analyze_file_context(path: &Path) -> ContextProfile {
+    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/home/rocha"));
     let mut is_inside_codebase = false;
     let mut sibling_categories = Vec::new();
+    let mut folder_context = None;
 
-    // Verifica se algum diretório pai contém marcadores de projeto
+    // Verifica se algum diretório pai contém marcadores de projeto (dentro de home)
     let mut current = path.parent();
     while let Some(p) = current {
+        if !p.starts_with(&home) {
+            break;
+        }
         for marker in crate::project::PROJECT_MARKERS {
             if p.join(marker).exists() {
                 is_inside_codebase = true;
@@ -143,12 +189,14 @@ pub fn analyze_file_context(path: &Path) -> ContextProfile {
     // Varre arquivos irmãos imediatos para herdar contexto de categoria
     if let Some(parent) = path.parent() {
         let f_context = analyze_folder_context(parent);
-        sibling_categories = f_context.dominant_categories;
+        sibling_categories = f_context.dominant_categories.clone();
+        folder_context = Some(f_context);
     }
 
     ContextProfile {
         is_inside_codebase,
         sibling_categories,
+        folder_context,
     }
 }
 

@@ -1,7 +1,9 @@
 mod apply;
+pub mod autopilot;
 mod cli;
 pub mod content;
 pub mod context;
+pub mod decision;
 mod export;
 mod hashing;
 mod ignore;

@@ -289,6 +289,32 @@ enum Commands {
         #[arg(long, default_value = "latest-plan")]
         from: String,
     },
+    /// Executa o piloto automático seguro de organização autônoma
+    Autopilot {
+        /// Confirma e executa as movimentações diretamente
+        #[arg(long, default_value_t = false)]
+        execute: bool,
+
+        /// Apenas simula as ações sem mover arquivos (padrão)
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
+
+        /// Foca apenas nas pastas de inbox (Downloads, Área de Trabalho)
+        #[arg(long, default_value_t = false)]
+        inbox: bool,
+
+        /// Limita o número máximo de ações automatizadas por run
+        #[arg(long)]
+        max_actions: Option<usize>,
+
+        /// Define o limite mínimo de confiança (de 0.0 a 1.0) para auto-aplicar
+        #[arg(long)]
+        min_confidence: Option<f64>,
+
+        /// Desfaz e reverte as movimentações do último run do autopilot
+        #[arg(long, default_value_t = false)]
+        undo_last: bool,
+    },
 }
 
 pub fn run() -> Result<()> {
@@ -583,6 +609,7 @@ pub fn run() -> Result<()> {
                 full_home,
                 content_aware,
                 context_aware,
+                min_confidence: None,
             };
             let plan = planner::generate_plan(&scan, &options);
             if json {
@@ -635,6 +662,7 @@ pub fn run() -> Result<()> {
                     full_home: scan.full_home,
                     content_aware: false, // Por enquanto não exposto no manifest create
                     context_aware: false, // Por enquanto não exposto no manifest create
+                    min_confidence: None,
                 };
                 let plan = planner::generate_plan(&scan, &options);
                 manifest::create_manifest(&plan, &scan)?;
@@ -782,6 +810,26 @@ pub fn run() -> Result<()> {
             from,
         } => {
             crate::export::export_memory(&from, jsonl, dry_run)?;
+        }
+        Commands::Autopilot {
+            execute,
+            dry_run,
+            inbox,
+            max_actions,
+            min_confidence,
+            undo_last,
+        } => {
+            if undo_last {
+                crate::rollback::run_rollback()?;
+            } else {
+                crate::autopilot::run_autopilot(
+                    execute,
+                    dry_run,
+                    inbox,
+                    max_actions,
+                    min_confidence,
+                )?;
+            }
         }
     }
 

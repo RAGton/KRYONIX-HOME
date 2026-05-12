@@ -73,6 +73,19 @@ pub fn run_apply(manifest: &mut Manifest, dry_run: bool) -> Result<()> {
             continue;
         }
 
+        // DEFESA EM PROFUNDIDADE: Bloquear qualquer ação não permitida para aplicação automática
+        if action.blocked_from_apply || !action.auto_apply_allowed {
+            action.status = "blocked_autopilot".to_string();
+            action.error_msg =
+                Some("Bloqueado pelas políticas de segurança do autopilot".to_string());
+            failed += 1;
+            println!(
+                "❌ BLOQUEADO (Autopilot Policy): {} (Classe: {})",
+                action.source_path, action.decision_class
+            );
+            continue;
+        }
+
         // Valida se origem existe
         if !source.exists() {
             action.status = "failed".to_string();

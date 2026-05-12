@@ -218,11 +218,14 @@ pub fn collect(path: &Path, content_aware: bool) -> FileMetadata {
         warnings.push("Protected path - metadata only scan".to_string());
     }
 
-    // Detect if inside a project codebase
+    // Detect if inside a project codebase (restricted to remain inside user home)
     let mut is_project_member = false;
     let mut project_root = None;
     let mut current = path.parent();
     while let Some(p) = current {
+        if !p.starts_with(&home) {
+            break;
+        }
         for marker in crate::project::PROJECT_MARKERS {
             if p.join(marker).exists() {
                 is_project_member = true;
