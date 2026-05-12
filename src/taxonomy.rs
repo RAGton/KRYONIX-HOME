@@ -429,7 +429,7 @@ pub fn find_category_by_keyword(keyword: &str) -> Option<CategoryConfig> {
 }
 
 pub fn load_taxonomy_config(specific_path: Option<&str>) -> TaxonomyConfig {
-    let mut paths_to_try = Vec::new();
+    let mut paths_to_try: Vec<PathBuf> = Vec::new();
     if let Some(p) = specific_path {
         paths_to_try.push(PathBuf::from(p));
     }
@@ -588,7 +588,7 @@ pub fn suggest_category_config(file: &FileMetadata, config: &TaxonomyConfig) -> 
 
             let is_inside_codebase = context_profile
                 .as_ref()
-                .map_or(false, |ctx| ctx.is_inside_codebase);
+                .is_some_and(|ctx| ctx.is_inside_codebase);
 
             let needs_review = if is_restricted_format || is_inside_codebase {
                 true
@@ -674,7 +674,7 @@ pub fn suggest_category_config(file: &FileMetadata, config: &TaxonomyConfig) -> 
 
     let is_inside_codebase = context_profile
         .as_ref()
-        .map_or(false, |ctx| ctx.is_inside_codebase);
+        .is_some_and(|ctx| ctx.is_inside_codebase);
     let risk = if ext_lower.is_empty() || is_inside_codebase {
         "high"
     } else {

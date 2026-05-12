@@ -67,6 +67,7 @@ pub const STRONG_PROJECT_MARKERS: &[&str] = &[
     ".obsidian",
 ];
 
+#[allow(dead_code)]
 pub const WEAK_PROJECT_MARKERS: &[&str] = &[
     "Makefile",
     "README.md",
@@ -125,7 +126,7 @@ pub fn get_project_evidence(_path: &Path, name: &str, markers: &[String]) -> Pro
 
     let (category_id, reason) = classify_project(name, markers);
     let mut warnings = Vec::new();
-    let mut confidence = 0.5;
+    let mut confidence: f64 = 0.5;
 
     if !strong_markers.is_empty() {
         confidence += 0.4;
@@ -138,21 +139,13 @@ pub fn get_project_evidence(_path: &Path, name: &str, markers: &[String]) -> Pro
     }
 
     let name_lower = name.to_lowercase();
-    if name_lower.contains("aulas") || name_lower.contains("estudos") {
-        if strong_markers.is_empty() {
-            confidence = 0.2;
-            warnings.push("Pasta de estudos sem marcadores fortes de código".to_string());
-        }
+    if (name_lower.contains("aulas") || name_lower.contains("estudos")) && strong_markers.is_empty() {
+        confidence = 0.2;
+        warnings.push("Pasta de estudos sem marcadores fortes de código".to_string());
     }
 
     let is_project = confidence >= 0.7 && !strong_markers.is_empty();
-    let final_confidence = if confidence > 1.0 {
-        1.0
-    } else if confidence < 0.0 {
-        0.0
-    } else {
-        confidence
-    };
+    let final_confidence = confidence.clamp(0.0, 1.0);
 
     ProjectEvidence {
         is_project,

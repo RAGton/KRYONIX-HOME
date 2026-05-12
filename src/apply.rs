@@ -74,14 +74,23 @@ pub fn run_apply(manifest: &mut Manifest, dry_run: bool) -> Result<()> {
         }
 
         // DEFESA EM PROFUNDIDADE: Bloquear qualquer ação não permitida para aplicação automática
-        if action.blocked_from_apply || !action.auto_apply_allowed {
+        // Requisitos incondicionais:
+        // - decision_class deve ser "AutoMoveCertified"
+        // - auto_apply_allowed deve ser true
+        // - blocked_from_apply deve ser false
+        // - risk deve ser "low"
+        if action.blocked_from_apply 
+            || !action.auto_apply_allowed 
+            || action.decision_class != "AutoMoveCertified"
+            || action.risk != "low"
+        {
             action.status = "blocked_autopilot".to_string();
             action.error_msg =
-                Some("Bloqueado pelas políticas de segurança do autopilot".to_string());
+                Some("Bloqueado pelas políticas estritas de segurança do autopilot (confidence < 0.95 ou risco != low)".to_string());
             failed += 1;
             println!(
-                "❌ BLOQUEADO (Autopilot Policy): {} (Classe: {})",
-                action.source_path, action.decision_class
+                "❌ BLOQUEADO (Autopilot Policy): {} (Classe: {}, Risco: {})",
+                action.source_path, action.decision_class, action.risk
             );
             continue;
         }

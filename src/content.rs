@@ -134,19 +134,11 @@ pub fn analyze_content_safe(path: &Path, limit_bytes: u64) -> Result<ContentProf
                     let mut detected_imports = Vec::new();
                     for line in content.lines() {
                         let trimmed = line.trim();
-                        if ext == "py"
-                            && (trimmed.starts_with("import ") || trimmed.starts_with("from "))
-                        {
-                            detected_imports.push(trimmed.to_string());
-                        } else if ext == "rs" && trimmed.starts_with("use ") {
-                            detected_imports.push(trimmed.to_string());
-                        } else if ext == "nix"
-                            && (trimmed.contains("import") || trimmed.contains("inputs"))
-                        {
-                            detected_imports.push(trimmed.to_string());
-                        } else if (ext == "js" || ext == "ts")
-                            && (trimmed.contains("import ") || trimmed.contains("require("))
-                        {
+                        let is_import_line = (ext == "py" && (trimmed.starts_with("import ") || trimmed.starts_with("from ")))
+                            || (ext == "rs" && trimmed.starts_with("use "))
+                            || (ext == "nix" && (trimmed.contains("import") || trimmed.contains("inputs")))
+                            || ((ext == "js" || ext == "ts") && (trimmed.contains("import ") || trimmed.contains("require(")));
+                        if is_import_line {
                             detected_imports.push(trimmed.to_string());
                         }
                     }
@@ -383,7 +375,7 @@ pub fn analyze_file_content(path: &Path) -> Option<ContentProfile> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs::{self, File};
+    use std::fs::File;
     use std::io::Write;
     use tempfile::tempdir;
 

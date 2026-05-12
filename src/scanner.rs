@@ -10,6 +10,7 @@ use crate::ignore;
 use crate::metadata::{self, FileMetadata, FileStatus};
 
 /// Diretórios permitidos para scan na Home do usuário.
+#[allow(dead_code)]
 const SCAN_DIRS: &[&str] = &[
     "Downloads",
     "Documentos",
@@ -77,12 +78,13 @@ fn runs_dir(run_id: &str) -> Result<PathBuf> {
 fn generate_run_id() -> String {
     let ts = Utc::now().format("%Y%m%d-%H%M%S");
     let host = hostname::get()
-        .map(|h| h.to_string_lossy().to_string())
+        .map(|h: std::ffi::OsString| h.to_string_lossy().to_string())
         .unwrap_or_else(|_| "unknown".to_string());
     format!("{ts}-{host}")
 }
 
 /// Executa o scan da Home do usuário.
+#[allow(dead_code)]
 pub fn run_scan() -> Result<ScanResult> {
     run_scan_options(false, false, false, false)
 }
@@ -233,7 +235,7 @@ fn walk_directory(
         .same_file_system(true)
         .into_iter();
 
-    let mut it = walker.filter_entry(|e| {
+    let mut it = walker.filter_entry(|e: &walkdir::DirEntry| {
         let path = e.path();
         if e.file_type().is_dir() && ignore::should_ignore_dir_options(path, full_home) {
             return false;
@@ -242,7 +244,7 @@ fn walk_directory(
     });
 
     while let Some(entry) = it.next() {
-        let entry = match entry {
+        let entry: walkdir::DirEntry = match entry {
             Ok(e) => e,
             Err(err) => {
                 let err_str = err.to_string();
@@ -327,7 +329,7 @@ fn walk_directory(
                 path: path.to_string_lossy().to_string(),
                 filename: path
                     .file_name()
-                    .and_then(|n| n.to_str())
+                    .and_then(|n: &std::ffi::OsStr| n.to_str())
                     .unwrap_or("")
                     .to_string(),
                 extension: String::new(),
@@ -373,8 +375,9 @@ fn calculate_dir_stats(path: &Path) -> (u64, usize) {
     for entry in WalkDir::new(path)
         .follow_links(false)
         .into_iter()
-        .filter_map(|e| e.ok())
+        .filter_map(|e: Result<walkdir::DirEntry, walkdir::Error>| e.ok())
     {
+        let entry: walkdir::DirEntry = entry;
         if entry.file_type().is_file() {
             let meta = match entry.metadata() {
                 Ok(m) => m,

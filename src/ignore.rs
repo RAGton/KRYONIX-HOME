@@ -33,6 +33,7 @@ const SECRET_FILES: &[&str] = &[
 const SECRET_EXTENSIONS: &[&str] = &[".key", ".pem", ".secret", ".token"];
 
 /// Retorna true se o diretório deve ser ignorado pelo scanner.
+#[allow(dead_code)]
 pub fn should_ignore_dir(path: &Path) -> bool {
     should_ignore_dir_options(path, false)
 }
@@ -84,6 +85,7 @@ pub fn should_ignore_dir_options(path: &Path, full_home: bool) -> bool {
 }
 
 /// Retorna true se o arquivo deve ser ignorado pelo scanner.
+#[allow(dead_code)]
 pub fn should_ignore_file(path: &Path) -> bool {
     should_ignore_file_options(path, false)
 }

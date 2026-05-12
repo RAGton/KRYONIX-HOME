@@ -194,7 +194,7 @@ pub fn suggest_rename(file: &FileMetadata) -> Option<RenameSuggestion> {
         .modified_at
         .as_deref()
         .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-        .map(|dt| dt.with_timezone(&chrono::Utc));
+        .map(|dt: chrono::DateTime<chrono::FixedOffset>| dt.with_timezone(&chrono::Utc));
     let (date_prefix, date_rule) = format_date_prefix(parsed_modified_at);
     rules_applied.push(date_rule);
 
@@ -269,7 +269,7 @@ pub fn suggest_rename(file: &FileMetadata) -> Option<RenameSuggestion> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::TimeZone;
+
 
     fn dummy_file(name: &str, ext: &str) -> FileMetadata {
         FileMetadata {

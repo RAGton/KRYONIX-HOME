@@ -1,7 +1,6 @@
 use anyhow::{Context, Result};
-use chrono::Utc;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 pub fn state_dir() -> Result<PathBuf> {
     let home = dirs::home_dir().context("Não foi possível determinar o diretório home")?;
@@ -28,7 +27,7 @@ pub fn run_doctor() -> Result<()> {
         if path.exists() {
             let files_count = fs::read_dir(&path)?
                 .filter_map(Result::ok)
-                .filter(|e| e.path().is_file())
+                .filter(|e: &fs::DirEntry| e.path().is_file())
                 .count();
             println!("✅ Subdiretório '{sub}': existente, contendo {files_count} arquivos.");
         } else {
@@ -64,7 +63,7 @@ pub fn run_clean(old_schema: bool) -> Result<()> {
     if manifests_dir.exists() {
         let entries = fs::read_dir(&manifests_dir)?
             .filter_map(Result::ok)
-            .filter(|e| e.path().is_file() && e.path().extension().is_some_and(|ext| ext == "json"))
+            .filter(|e: &fs::DirEntry| e.path().is_file() && e.path().extension().is_some_and(|ext| ext == "json"))
             .collect::<Vec<_>>();
 
         let mut cleaned_count = 0;
@@ -83,7 +82,7 @@ pub fn run_clean(old_schema: bool) -> Result<()> {
     if runs_dir.exists() {
         let entries = fs::read_dir(&runs_dir)?
             .filter_map(Result::ok)
-            .filter(|e| e.path().is_dir())
+            .filter(|e: &fs::DirEntry| e.path().is_dir())
             .collect::<Vec<_>>();
 
         let mut cleaned_runs = 0;

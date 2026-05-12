@@ -325,8 +325,8 @@ pub fn print_plan(plan: &Plan) {
     println!("\x1b[1mTabela de Organização (Top 15):\x1b[0m");
     println!("────────────────────────────────────────────────────────────────────────────────────────────────────");
     println!(
-        "\x1b[1m  {:<6} | {:<30} -> {:<30} | {}\x1b[0m",
-        "RISCO", "ORIGEM (DE ONDE ESTÁ)", "DESTINO (PARA ONDE VAI)", "MOTIVO"
+        "\x1b[1m  {:<6} | {:<30} -> {:<30} | MOTIVO\x1b[0m",
+        "RISCO", "ORIGEM (DE ONDE ESTÁ)", "DESTINO (PARA ONDE VAI)"
     );
     println!("────────────────────────────────────────────────────────────────────────────────────────────────────");
 
@@ -413,8 +413,8 @@ pub fn print_inbox_report(plan: &Plan) {
     println!("\x1b[1m📥 Kryonix Home Inbox (Downloads & Desktop)\x1b[0m");
     println!("────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────");
     println!(
-        "\x1b[1m  {:<30} | {:<30} | {:<15} | {:<9} | {:<6} | {}\x1b[0m",
-        "DE ONDE ESTÁ", "PARA ONDE VAI", "CATEGORIA", "CONFIANÇA", "RISCO", "MOTIVO"
+        "\x1b[1m  {:<30} | {:<30} | {:<15} | {:<9} | {:<6} | MOTIVO\x1b[0m",
+        "DE ONDE ESTÁ", "PARA ONDE VAI", "CATEGORIA", "CONFIANÇA", "RISCO"
     );
     println!("────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────");
 
@@ -479,6 +479,10 @@ pub fn print_inbox_report(plan: &Plan) {
     // Exibe temporários de forma agregada
     if temp_files_count > 0 {
         let size_mb = temp_files_size as f64 / 1024.0 / 1024.0;
+        let desc = format!(
+            "Agrupamento de {} arquivos temporários/crdownload incompletos",
+            temp_files_count
+        );
         println!(
             "  {:<30} | {:<30} | {:<15} | {:<9} | \x1b[31m{:<6}\x1b[0m | {} ({:.1} MB)",
             "Downloads/Temporários/*",
@@ -486,10 +490,7 @@ pub fn print_inbox_report(plan: &Plan) {
             "Temporários",
             "1.00",
             "HIGH",
-            format!(
-                "Agrupamento de {} arquivos temporários/crdownload incompletos",
-                temp_files_count
-            ),
+            desc,
             size_mb
         );
         count += 1;

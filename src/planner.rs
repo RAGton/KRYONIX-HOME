@@ -117,6 +117,7 @@ pub struct Plan {
     pub schema_version: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Default, Clone)]
 pub struct PlanOptions<'a> {
     pub rename_suggestions: bool,
@@ -604,7 +605,7 @@ pub fn enrich_and_classify_proposal(
     file_meta: Option<&FileMetadata>,
     project_candidate: Option<&crate::project::ProjectCandidate>,
     home_dir: &str,
-    options: Option<&PlanOptions>,
+    _options: Option<&PlanOptions>,
 ) {
     let old_path = proposal.old_path.clone();
     let new_dir = proposal.new_dir.clone();
@@ -770,7 +771,7 @@ pub fn enrich_and_classify_proposal(
         .to_string_lossy()
         .to_lowercase();
     if let Some(ref cat_id) = proposal.category_id {
-        let cat_part = cat_id.split('.').last().unwrap_or("");
+        let cat_part = cat_id.split('.').next_back().unwrap_or("");
         if filename_lower.contains(cat_part) {
             filename_score += 0.25;
         }
@@ -792,11 +793,7 @@ pub fn enrich_and_classify_proposal(
         + (content_score * 0.1)
         + (project_marker_score * 0.05);
 
-    if final_score > 1.0 {
-        final_score = 1.0;
-    } else if final_score < 0.0 {
-        final_score = 0.0;
-    }
+    final_score = final_score.clamp(0.0, 1.0);
 
     proposal.confidence = final_score;
 
@@ -837,6 +834,17 @@ pub fn enrich_and_classify_proposal(
     let staging_only = false;
 
     // Core Autopilot Decision Logic
+    // REQUISITOS OBRIGATÓRIOS PARA AutoMoveCertified:
+    // - confidence >= 0.95 (hardfloor interno incondicional)
+    // - risk == "low"
+    // - auto_apply_allowed == true
+    // - blocked_from_apply == false
+    // - needs_review == false (ou rebaixado)
+    // - staging_only == false
+    // - categoria não pode ser Incerto
+    // - destino não pode conter Revisar/Baixa_Confianca/Conflitos
+    // - evidência de pelo menos duas fontes independentes
+    // - rollback manifest obrigatório (será gerado)
     if is_protected || is_project || is_vault || is_script_or_exe || is_overwrite {
         decision_class = crate::decision::DecisionClass::BlockedUnsafe;
         blocked_from_apply = true;
@@ -846,8 +854,9 @@ pub fn enrich_and_classify_proposal(
         blocked_from_apply = false;
         auto_apply_allowed = false;
     } else if proposal.risk == "low"
-        && final_score >= options.and_then(|o| o.min_confidence).unwrap_or(0.95)
+        && final_score >= 0.95 // Hard floor incondicional para automove de 0.95
         && has_multisource
+        && !is_uncertain_destination
     {
         decision_class = crate::decision::DecisionClass::AutoMoveCertified;
         blocked_from_apply = false;
@@ -896,6 +905,7 @@ fn mask_protected_path(path: &str, reason: &str) -> String {
 mod tests {
     use super::*;
     use crate::metadata::FileStatus;
+    use chrono::Utc;
 
     fn create_mock_file(path: &str, protected: bool) -> FileMetadata {
         FileMetadata {
@@ -942,11 +952,12 @@ mod tests {
 
     #[test]
     fn test_planner_absolute_protection_enforcement() {
-        let mut files = Vec::new();
-        files.push(create_mock_file("/home/user/.ssh/id_rsa", true));
-        files.push(create_mock_file("/home/user/.gnupg/secring.gpg", true));
-        files.push(create_mock_file("/home/user/.config/app/secrets.env", true));
-        files.push(create_mock_file("/home/user/Downloads/public.pdf", false));
+        let files = vec![
+            create_mock_file("/home/user/.ssh/id_rsa", true),
+            create_mock_file("/home/user/.gnupg/secring.gpg", true),
+            create_mock_file("/home/user/.config/app/secrets.env", true),
+            create_mock_file("/home/user/Downloads/public.pdf", false),
+        ];
 
         let scan = ScanResult {
             schema_version: "1.0".to_string(),
@@ -1009,5 +1020,90 @@ mod tests {
         // default fields must populate successfully
         assert_eq!(plan.files_seen, 0);
         assert!(!plan.full_home);
+    }
+
+    #[test]
+    fn test_autopilot_safety_hardfloor() {
+        let mut files = Vec::new();
+        // Arquivo simulado de baixo risco com score moderado (0.62)
+        let mut f1 = create_mock_file("/home/user/Downloads/test_doc.pdf", false);
+        f1.mime = "application/pdf".to_string();
+        files.push(f1);
+
+        let scan = ScanResult {
+            schema_version: "1.0".to_string(),
+            run_id: "test".to_string(),
+            timestamp: Utc::now(),
+            home_dir: "/home/user".to_string(),
+            dirs_scanned: vec!["/home/user".to_string()],
+            files,
+            projects: vec![],
+            files_analyzed: 1,
+            files_ignored: 0,
+            files_error: 0,
+            total_size_bytes: 1024,
+            warnings: vec![],
+            full_home: false,
+            denied_count: 0,
+            skipped_count: 0,
+            protected_count: 0,
+            inbox_count: 1,
+            project_count: 0,
+        };
+
+        let options = PlanOptions {
+            min_confidence: Some(0.50), // Usuário tentando baixar o limite
+            ..Default::default()
+        };
+        let plan = generate_plan(&scan, &options);
+
+        assert!(!plan.proposals.is_empty());
+        let proposal = &plan.proposals[0];
+        
+        // Com score baixo (ex: sem evidências extras suficientes), ele deve ser NeedsHumanReview, nunca AutoMoveCertified
+        assert_ne!(proposal.decision_class, crate::decision::DecisionClass::AutoMoveCertified);
+        assert!(!proposal.auto_apply_allowed);
+
+        // Mesmo se criarmos um item com confiança exatamente 0.62 de risco baixo e definirmos min_confidence = 0.50,
+        // o hard floor interno (0.95) em planner.rs impede que ele se torne AutoMoveCertified.
+    }
+
+    #[test]
+    fn test_uncertain_destination_never_automove() {
+        let mut files = Vec::new();
+        let mut f1 = create_mock_file("/home/user/Downloads/revisar_doc.pdf", false);
+        f1.mime = "application/pdf".to_string();
+        files.push(f1);
+
+        let scan = ScanResult {
+            schema_version: "1.0".to_string(),
+            run_id: "test".to_string(),
+            timestamp: Utc::now(),
+            home_dir: "/home/user".to_string(),
+            dirs_scanned: vec!["/home/user".to_string()],
+            files,
+            projects: vec![],
+            files_analyzed: 1,
+            files_ignored: 0,
+            files_error: 0,
+            total_size_bytes: 1024,
+            warnings: vec![],
+            full_home: false,
+            denied_count: 0,
+            skipped_count: 0,
+            protected_count: 0,
+            inbox_count: 1,
+            project_count: 0,
+        };
+
+        let options = PlanOptions::default();
+        let plan = generate_plan(&scan, &options);
+
+        assert!(!plan.proposals.is_empty());
+        let proposal = &plan.proposals[0];
+        
+        // Destino incerto (como contendo "revisar") nunca deve ser AutoMoveCertified
+        assert_ne!(proposal.decision_class, crate::decision::DecisionClass::AutoMoveCertified);
+        assert!(!proposal.auto_apply_allowed);
     }
 }
