@@ -37,6 +37,7 @@ fn default_false() -> bool {
 
 fn default_blacklist_extensions() -> Vec<String> {
     vec![
+        // Executables & scripts
         "exe".to_string(),
         "msi".to_string(),
         "sh".to_string(),
@@ -44,6 +45,22 @@ fn default_blacklist_extensions() -> Vec<String> {
         "ps1".to_string(),
         "bin".to_string(),
         "run".to_string(),
+        // Virtual machines
+        "qcow2".to_string(),
+        "vmdk".to_string(),
+        "vdi".to_string(),
+        "vhd".to_string(),
+        "vhdx".to_string(),
+        // Databases
+        "sqlite".to_string(),
+        "db".to_string(),
+        "sqlite3".to_string(),
+        // Secrets & keys
+        "env".to_string(),
+        "token".to_string(),
+        "secret".to_string(),
+        "key".to_string(),
+        "pem".to_string(),
     ]
 }
 
@@ -53,6 +70,13 @@ fn default_blacklist_folders() -> Vec<String> {
         ".ssh".to_string(),
         ".gnupg".to_string(),
         ".config".to_string(),
+        ".env".to_string(),
+        ".password-store".to_string(),
+        ".pki".to_string(),
+        "VMs".to_string(),
+        "libvirt".to_string(),
+        ".local/share/gnome-boxes".to_string(),
+        ".local/share/libvirt".to_string(),
     ]
 }
 
@@ -98,6 +122,23 @@ pub fn load_autopilot_config() -> AutopilotConfig {
     AutopilotConfig::default()
 }
 
+/// Returns the allowed hostnames for autopilot execution.
+/// Only the Inspiron workstation should run autopilot on the user HOME.
+/// Glacier is a server and must never organize user HOME files.
+fn allowed_autopilot_hostnames() -> Vec<&'static str> {
+    vec!["inspiron", "inspiron-nina"]
+}
+
+/// Checks if the current host is allowed to run the autopilot.
+fn is_host_allowed() -> Result<bool> {
+    let hostname = hostname::get()
+        .map(|h| h.to_string_lossy().to_lowercase().to_string())
+        .unwrap_or_else(|_| "unknown".to_string());
+    let allowed = allowed_autopilot_hostnames();
+    // Allow if hostname starts with any allowed prefix, or if hostname is unknown (dev/sandbox)
+    Ok(allowed.iter().any(|a| hostname.starts_with(a)) || hostname == "unknown")
+}
+
 pub fn run_autopilot(
     execute_flag: bool,
     dry_run_flag: bool,
@@ -106,6 +147,22 @@ pub fn run_autopilot(
     min_confidence_override: Option<f64>,
 ) -> Result<()> {
     println!("🤖 Iniciando Kryonix Home Brain - Safe Autonomous Autopilot");
+
+    // Gate multi-host: bloquear execução em hosts não permitidos (ex: Glacier)
+    if !is_host_allowed()? {
+        let hostname = hostname::get()
+            .map(|h| h.to_string_lossy().to_string())
+            .unwrap_or_else(|_| "unknown".to_string());
+        anyhow::bail!(
+            "❌ BLOQUEADO: O autopilot de Home não pode ser executado no host '{}'.\n\
+             O autopilot de organização da HOME é permitido apenas em workstations\n\
+             cliente (inspiron, inspiron-nina). O Glacier é um servidor de IA e\n\
+             não deve organizar arquivos de HOME do usuário.\n\n\
+             Hosts permitidos: {:?}",
+            hostname,
+            allowed_autopilot_hostnames()
+        );
+    }
 
     // 1. Carregar Configuração do Autopilot
     let mut config = load_autopilot_config();
@@ -335,6 +392,16 @@ pub fn run_autopilot(
     // Executar apply (seja dry_run ou real)
     crate::apply::run_apply(&mut manifest, is_dry_run)?;
 
+    // Salvar relatório estruturado do dry-run para auditoria
+    if is_dry_run {
+        save_dry_run_audit(
+            &manifest,
+            &final_auto_apply,
+            &needs_human_review,
+            &blocked_unsafe,
+        )?;
+    }
+
     if !is_dry_run {
         println!("\n🚀 Operação de Autopiloto Seguro concluída com absoluto SUCESSO!");
         println!("   Se necessário desfazer as ações realizadas, execute:");
@@ -437,5 +504,139 @@ fn print_autopilot_summary(
         if blocked.len() > 10 {
             println!("  ... e mais {} itens.", blocked.len() - 10);
         }
+    }
+}
+
+/// Salva um relatório JSON estruturado do dry-run para auditoria.
+fn save_dry_run_audit(
+    manifest: &crate::manifest::Manifest,
+    certified: &[PlanProposal],
+    review: &[PlanProposal],
+    blocked: &[PlanProposal],
+) -> Result<()> {
+    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/home/rocha"));
+    let dir = home.join(".local/state/kryonix/home-brain/dry-run");
+    fs::create_dir_all(&dir)?;
+
+    let audit = serde_json::json!({
+        "type": "dry_run_audit",
+        "timestamp": chrono::Utc::now().to_rfc3339(),
+        "hostname": hostname::get()
+            .map(|h| h.to_string_lossy().to_string())
+            .unwrap_or_else(|_| "unknown".to_string()),
+        "run_id": manifest.run_id,
+        "schema_version": manifest.schema_version,
+        "summary": {
+            "auto_move_certified": certified.len(),
+            "needs_human_review": review.len(),
+            "blocked_unsafe": blocked.len(),
+            "total_actions": manifest.actions.len(),
+        },
+        "certified_items": certified.iter().map(|p| {
+            serde_json::json!({
+                "source": p.old_path,
+                "destination": p.destination,
+                "confidence": p.confidence,
+                "risk": p.risk,
+                "decision_class": format!("{:?}", p.decision_class),
+                "reason": p.reason,
+            })
+        }).collect::<Vec<_>>(),
+        "blocked_items": blocked.iter().map(|p| {
+            serde_json::json!({
+                "source": p.old_path,
+                "safety_flags": p.safety_flags,
+                "decision_class": format!("{:?}", p.decision_class),
+            })
+        }).collect::<Vec<_>>(),
+    });
+
+    let filename = format!(
+        "dry_run_{}.json",
+        chrono::Utc::now().format("%Y%m%d-%H%M%S")
+    );
+    let path = dir.join(&filename);
+    fs::write(&path, serde_json::to_string_pretty(&audit)?)?;
+    println!("📋 Relatório de dry-run salvo em: {}", path.display());
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_autopilot_config_defaults() {
+        let config = AutopilotConfig::default();
+        assert!(!config.enabled, "Autopilot must be disabled by default");
+        assert!(config.dry_run, "Dry-run must be true by default");
+        assert!(
+            (config.min_confidence - 0.95).abs() < f64::EPSILON,
+            "Min confidence must be 0.95 by default"
+        );
+        assert_eq!(config.max_actions, 100);
+        assert!(!config.staging_only);
+    }
+
+    #[test]
+    fn test_autopilot_blacklist_vm_files() {
+        let config = AutopilotConfig::default();
+        let vm_exts = ["qcow2", "vmdk", "vdi", "vhd", "vhdx"];
+        for ext in &vm_exts {
+            assert!(
+                config.blacklist_extensions.iter().any(|e| e == ext),
+                "VM extension '{}' must be in default blacklist",
+                ext
+            );
+        }
+    }
+
+    #[test]
+    fn test_autopilot_blacklist_databases() {
+        let config = AutopilotConfig::default();
+        let db_exts = ["sqlite", "db", "sqlite3"];
+        for ext in &db_exts {
+            assert!(
+                config.blacklist_extensions.iter().any(|e| e == ext),
+                "Database extension '{}' must be in default blacklist",
+                ext
+            );
+        }
+    }
+
+    #[test]
+    fn test_autopilot_blacklist_secrets() {
+        let config = AutopilotConfig::default();
+        let secret_exts = ["env", "token", "secret", "key", "pem"];
+        for ext in &secret_exts {
+            assert!(
+                config.blacklist_extensions.iter().any(|e| e == ext),
+                "Secret extension '{}' must be in default blacklist",
+                ext
+            );
+        }
+    }
+
+    #[test]
+    fn test_autopilot_blacklist_folders() {
+        let config = AutopilotConfig::default();
+        let sensitive_folders = [".ssh", ".gnupg", ".config", ".password-store", ".pki"];
+        for folder in &sensitive_folders {
+            assert!(
+                config.blacklist_folders.iter().any(|f| f == folder),
+                "Sensitive folder '{}' must be in default blacklist",
+                folder
+            );
+        }
+    }
+
+    #[test]
+    fn test_autopilot_load_default_when_no_config() {
+        // When config file doesn't exist, should return safe defaults
+        let config = load_autopilot_config();
+        assert!(!config.enabled);
+        assert!(config.dry_run);
+        assert!((config.min_confidence - 0.95).abs() < f64::EPSILON);
     }
 }

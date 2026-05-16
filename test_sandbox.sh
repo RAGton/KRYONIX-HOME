@@ -10,6 +10,7 @@ rm -rf "$SANDBOX"
 echo "📂 Criando estrutura do sandbox..."
 mkdir -p "$SANDBOX/.config/kryonix"
 mkdir -p "$SANDBOX/.local/share/kryonix/home"
+mkdir -p "$SANDBOX/.local/state/kryonix/home-brain/dry-run"
 mkdir -p "$SANDBOX/Downloads"
 mkdir -p "$SANDBOX/Desktop"
 mkdir -p "$SANDBOX/Downloads/project_folder/.git"
@@ -49,9 +50,29 @@ echo "echo 'instalar'" >> "$SANDBOX/Downloads/installer.sh"
 echo "KRYONIX_BRAIN_API_KEY=abc123xyz" > "$SANDBOX/Downloads/credentials.env"
 echo "PRIVATE KEY" >> "$SANDBOX/Downloads/credentials.env"
 
-# 6. Projeto (BlockedUnsafe por ser pasta de projeto / Git)
+# 7. Projeto (BlockedUnsafe por ser pasta de projeto / Git)
 echo "[core]" > "$SANDBOX/Downloads/project_folder/.git/config"
 echo "repositoryformatversion = 0" >> "$SANDBOX/Downloads/project_folder/.git/config"
 echo "cargo build" > "$SANDBOX/Downloads/project_folder/main.rs"
 
+# 8. VM disk image (BlockedUnsafe - G1 new)
+echo "QCOW2 VIRTUAL DISK" > "$SANDBOX/Downloads/test_vm.qcow2"
+
+# 9. Database file (BlockedUnsafe - G1 new)
+echo "SQLITE DATABASE" > "$SANDBOX/Downloads/app_data.sqlite"
+
+# 10. Token file (BlockedUnsafe - G2 new)
+echo "AUTH_TOKEN=test" > "$SANDBOX/Downloads/api_access.token"
+
+# 11. PEM key file (BlockedUnsafe - G2 new)
+echo "BEGIN PRIVATE KEY" > "$SANDBOX/Downloads/server.pem"
+
 echo "✅ Sandbox estruturado com sucesso em $SANDBOX!"
+echo ""
+echo "=== Arquivos no sandbox ==="
+find "$SANDBOX/Downloads" -type f | sort
+echo ""
+echo "=== Verificações de segurança ==="
+echo "VM (.qcow2), DB (.sqlite), Token (.token), PEM (.pem) devem ser bloqueados pela blacklist expandida."
+echo "MSI (.msi), SH (.sh), ENV (.env) devem ser bloqueados pela blacklist original."
+echo "Projetos (.git) devem ser bloqueados por detecção de projeto."
